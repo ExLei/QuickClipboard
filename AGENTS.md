@@ -38,6 +38,10 @@ npm run tauri:dev:no-watch         # 开发模式（禁用文件监听）
 
 npm run tauri:build                # 正式构建（完整版）
 npm run tauri:build:community      # 正式构建（社区版）
+
+npm run check:community            # Rust 编译检查（社区版，无需私有插件）
+npm run clippy:community           # Rust lint（社区版，无需私有插件）
+npm run test:rust                  # Rust 单元测试（社区版，无需私有插件）
 ```
 
 `npm run dev` / `npm run build` 仅运行 Vite（不含 Tauri）。除非只需要前端打包，否则使用 `tauri dev` / `tauri build`。
