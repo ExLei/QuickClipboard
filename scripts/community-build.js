@@ -18,7 +18,9 @@ const defaultCapabilityPath = path.join(rootDir, 'src-tauri', 'capabilities', 'd
 const cargoTomlPath = path.join(rootDir, 'src-tauri', 'Cargo.toml');
 const cargoLockPath = path.join(rootDir, 'src-tauri', 'Cargo.lock');
 
+// 需要从 Cargo.toml 中移除的私有依赖行前缀
 const PRIVATE_DEPENDENCY_PREFIXES = ['screenshot-suite = {', 'gpu-image-viewer = {'];
+// 需要从 [features] 中移除的私有 feature 名称（仅移除含 dep: 引用的行，保留虚拟 feature）
 const PRIVATE_FEATURE_NAMES = ['gpu-image-viewer', 'screenshot-suite'];
 
 function patchCapabilityFile(filePath) {
@@ -57,9 +59,11 @@ function patchCargoToml() {
         .split(/\r?\n/)
         .filter((line) => {
             const trimmed = line.trim();
+            // 移除私有依赖声明行
             if (PRIVATE_DEPENDENCY_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) {
                 return false;
             }
+            // 移除引用已删除 dep: 的私有 feature 行，保留虚拟 feature（如 screenshot-suite = []）
             if (PRIVATE_FEATURE_NAMES.some((name) => {
                 const pattern = new RegExp(`^${name}\\s*=\\s*\\[`);
                 return pattern.test(trimmed) && trimmed.includes('dep:');
@@ -68,7 +72,16 @@ function patchCargoToml() {
             }
             return true;
         })
-        .map((line) => (line.trim().startsWith('default') ? 'default = []' : line))
+        .map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('default =')) return line;
+            // 仅从 default 中移除私有 feature，保留其他公共 feature
+            const m = line.match(/^(\s*)default\s*=\s*\[(.*)\]/);
+            if (!m) return line;
+            const kept = m[2].split(',').map(s => s.trim()).filter(Boolean)
+                .filter(f => !PRIVATE_FEATURE_NAMES.some(n => f === `"${n}"`));
+            return `${m[1]}default = [${kept.join(', ')}]`;
+        })
         .join(eol);
 
     if (modified === original) return () => {};
