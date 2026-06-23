@@ -14,7 +14,7 @@ src-tauri/        ← Rust 后端（Tauri 2）
     commands/     ← Tauri invoke 命令模块
     services/     ← 业务逻辑（SQLite、clipboard、sync 等）
     windows/      ← 窗口生命周期（tray、main、quickpaste 等）
-  plugins/        ← Rust 插件（部分为私有：gpu-image-viewer、screenshot-suite）
+  plugins/        ← Rust 插件（low-memory-fltk、及私有：gpu-image-viewer、screenshot-suite）
 ```
 
 **各层详细规范：** 参见 `src/AGENTS.md`、`src/shared/AGENTS.md`、`src-tauri/src/AGENTS.md`。  
@@ -23,7 +23,7 @@ src-tauri/        ← Rust 后端（Tauri 2）
 ## 环境要求
 
 - Node.js ≥ 16（`package.json` 中未声明 `engines` 字段，此为推荐值）
-- Rust ≥ 1.70 + `tauri-cli`
+- Rust ≥ 1.70 + tauri-cli ≥ 2.0
 - Git + SSH 密钥（拉取私有子模块时需要）
 
 ## 常用命令
@@ -57,6 +57,7 @@ npm run test:rust                  # Rust 单元测试（社区版，无需私�
 - 社区构建通过 `--no-default-features` 禁用私有 feature（由 `scripts/community-build.js` 执行）
 - `gpu-image-viewer = ["dep:gpu-image-viewer"]` — 私有 GPU 图片查看器
 - `screenshot-suite = ["dep:screenshot-suite"]` — 私有截图插件
+- `custom-protocol = ["tauri/custom-protocol"]` — 协议资产功能
 - `screenshot-suite` 在 `lib.rs` 的 `#[cfg(feature = "screenshot-suite")]` 块中统一使用
 
 > ⚠️ `lib.rs` 中没有 `compile_error!` 来阻止 `screenshot-suite` 与社区版截图插件共存，仅靠构建流程保证互斥。
@@ -101,7 +102,7 @@ npm run test:rust                  # Rust 单元测试（社区版，无需私�
 - **SQLite** — 单连接 + `Mutex`，WAL 模式，不支持并发写入
 - **React Compiler** — 通过 `babel-plugin-react-compiler` 激活，遵循 Rules of React
 - **Vite alias** — `@` → `src/`、`@shared` → `src/shared/`、`@windows` → `src/windows/`
-- `.gitignore` 排除项：`src/windows/screenshot/`、`src-tauri/plugins/gpu-image-viewer/`、`docs/`、`.tauri/`
+- `.gitignore` 排除项：`src/windows/screenshot/`、`src-tauri/plugins/gpu-image-viewer/`、`docs/`
 - **PR 推送** — 强制推送必须先 `checkout` 到 PR 分支，再 `cherry-pick` 需要的提交后 `--force-with-lease`，禁止直接从 `dev` 强推到 PR 分支（会覆盖原有结构、附带不相关提交）
 
 ## 测试与验证

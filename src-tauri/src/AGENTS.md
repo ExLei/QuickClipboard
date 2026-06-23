@@ -24,6 +24,7 @@ src/
 │   ├── main_window/  #   主窗口显示/隐藏/吸附
 │   ├── quickpaste/   #   快速粘贴窗口
 │   ├── tray/         #   系统托盘
+│   ├── plugins/      #   窗口内嵌插件（context_menu、input_dialog）
 │   └── ...           #   settings_window, transfer_shelf 等
 ├── security/         # WebView 安全检查
 ├── maintenance/      # 数据维护模块
