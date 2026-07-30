@@ -7,11 +7,14 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static BUILTIN_COPY_SOUND: &[u8] = include_bytes!("../../../../sounds/copy.mp3");
 static BUILTIN_PASTE_SOUND: &[u8] = include_bytes!("../../../../sounds/paste.mp3");
 static BUILTIN_SCROLL_SOUND: &[u8] = include_bytes!("../../../../sounds/roll.mp3");
+const AUDIO_WARMUP_DURATION: Duration = Duration::from_millis(200);
+const AUDIO_IDLE_RELEASE_DELAY: Duration = Duration::from_secs(1);
+const AUDIO_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 // 记录最后一次粘贴音效播放的时间戳
 static LAST_PASTE_SOUND_TIME_MS: AtomicU64 = AtomicU64::new(0);
@@ -36,25 +39,27 @@ enum SoundCommand {
 static SOUND_SENDER: Lazy<Sender<SoundCommand>> = Lazy::new(|| {
     let (tx, rx) = mpsc::channel::<SoundCommand>();
 
-    thread::Builder::new()
+    if let Err(error) = thread::Builder::new()
         .name("audio-player".into())
         .spawn(move || audio_thread_loop(rx))
-        .expect("Failed to spawn audio thread");
+    {
+        eprintln!("创建音效播放线程失败: {}", error);
+    }
 
     tx
 });
 
-// 获取当前默认输出设备的名称
 fn get_default_device_name() -> Option<String> {
     rodio::cpal::default_host()
         .default_output_device()
-        .and_then(|d| d.name().ok())
+        .and_then(|device| device.name().ok())
 }
 
 struct AudioContext {
     _stream: OutputStream,
     handle: OutputStreamHandle,
     device_name: Option<String>,
+    sinks: Vec<Sink>,
 }
 
 impl AudioContext {
@@ -65,6 +70,7 @@ impl AudioContext {
             _stream: stream,
             handle,
             device_name,
+            sinks: Vec::new(),
         })
     }
 
@@ -72,74 +78,115 @@ impl AudioContext {
         get_default_device_name() != self.device_name
     }
 
-    fn play(&self, cmd: &SoundCommand) -> Result<(), String> {
-        match cmd {
+    fn play(&mut self, cmd: &SoundCommand) -> Result<(), String> {
+        let sink = match cmd {
             SoundCommand::PlayFile(path, volume) => play_file(&self.handle, path, *volume),
             SoundCommand::PlayBytes(bytes, volume) => play_bytes(&self.handle, bytes, *volume),
             SoundCommand::PlayBeep(freq, dur, vol) => play_beep(&self.handle, *freq, *dur, *vol),
-        }
+        }?;
+
+        self.sinks.push(sink);
+        Ok(())
     }
+
+    fn remove_finished_sinks(&mut self) {
+        self.sinks.retain(|sink| !sink.empty());
+    }
+
+    fn is_idle(&self) -> bool {
+        self.sinks.is_empty()
+    }
+}
+
+fn create_audio_context() -> Option<AudioContext> {
+    let context = AudioContext::try_new();
+    if context.is_some() {
+        thread::sleep(AUDIO_WARMUP_DURATION);
+    }
+    context
 }
 
 fn audio_thread_loop(rx: mpsc::Receiver<SoundCommand>) {
-    let mut ctx = AudioContext::try_new();
+    let mut ctx: Option<AudioContext> = None;
+    let mut idle_since: Option<Instant> = None;
 
     loop {
-        match rx.recv_timeout(Duration::from_secs(2)) {
+        let timeout = if ctx.is_some() {
+            AUDIO_POLL_INTERVAL
+        } else {
+            Duration::from_secs(1)
+        };
+
+        match rx.recv_timeout(timeout) {
             Ok(cmd) => {
-                // 检查设备变化或上下文无效
-                let need_reinit = ctx.as_ref().map_or(true, |c| c.device_changed());
-                if need_reinit {
-                    ctx = AudioContext::try_new();
+                if ctx.as_ref().map_or(true, |context| context.device_changed()) {
+                    ctx = create_audio_context();
                 }
 
-                // 尝试播放
-                let result = ctx.as_ref().map_or(
+                let result = ctx.as_mut().map_or(
                     Err("无音频设备".to_string()),
-                    |c| c.play(&cmd),
+                    |context| context.play(&cmd),
                 );
 
-                // 播放失败时重建并重试
                 if result.is_err() {
-                    ctx = AudioContext::try_new();
-                    if let Some(ref c) = ctx {
-                        let _ = c.play(&cmd);
+                    ctx = create_audio_context();
+                    if let Some(context) = ctx.as_mut() {
+                        let _ = context.play(&cmd);
                     }
                 }
+
+                idle_since = None;
             }
-            Err(RecvTimeoutError::Timeout) => {
-                // 定期检查设备变化
-                if ctx.as_ref().map_or(true, |c| c.device_changed()) {
-                    ctx = AudioContext::try_new();
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        let should_release = match ctx.as_mut() {
+            Some(context) => {
+                context.remove_finished_sinks();
+                if context.is_idle() {
+                    match idle_since {
+                        Some(since) => since.elapsed() >= AUDIO_IDLE_RELEASE_DELAY,
+                        None => {
+                            idle_since = Some(Instant::now());
+                            false
+                        }
+                    }
+                } else {
+                    idle_since = None;
+                    false
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            None => false,
+        };
+
+        if should_release {
+            ctx = None;
+            idle_since = None;
         }
     }
 }
 
-fn play_file(handle: &OutputStreamHandle, path: &PathBuf, volume: f32) -> Result<(), String> {
+fn play_file(handle: &OutputStreamHandle, path: &PathBuf, volume: f32) -> Result<Sink, String> {
     let sink = Sink::try_new(handle).map_err(|e| e.to_string())?;
     let file = File::open(path).map_err(|e| format!("打开文件失败: {}", e))?;
     let source = Decoder::new(BufReader::new(file)).map_err(|e| format!("解码失败: {}", e))?;
 
     sink.set_volume(volume);
     sink.append(source);
-    sink.detach();
-    Ok(())
+    Ok(sink)
 }
 
-fn play_bytes(handle: &OutputStreamHandle, bytes: &'static [u8], volume: f32) -> Result<(), String> {
+fn play_bytes(handle: &OutputStreamHandle, bytes: &'static [u8], volume: f32) -> Result<Sink, String> {
     let sink = Sink::try_new(handle).map_err(|e| e.to_string())?;
     let source = Decoder::new(Cursor::new(bytes)).map_err(|e| format!("解码失败: {}", e))?;
 
     sink.set_volume(volume);
     sink.append(source);
-    sink.detach();
-    Ok(())
+    Ok(sink)
 }
 
-fn play_beep(handle: &OutputStreamHandle, frequency: f32, duration_ms: u64, volume: f32) -> Result<(), String> {
+fn play_beep(handle: &OutputStreamHandle, frequency: f32, duration_ms: u64, volume: f32) -> Result<Sink, String> {
     let sink = Sink::try_new(handle).map_err(|e| e.to_string())?;
 
     let sample_rate = 44100u32;
@@ -154,8 +201,7 @@ fn play_beep(handle: &OutputStreamHandle, frequency: f32, duration_ms: u64, volu
     let source = rodio::buffer::SamplesBuffer::new(1, sample_rate, samples);
     sink.set_volume(volume);
     sink.append(source);
-    sink.detach();
-    Ok(())
+    Ok(sink)
 }
 
 #[inline]
