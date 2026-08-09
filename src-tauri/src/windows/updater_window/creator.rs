@@ -1,4 +1,5 @@
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder, WebviewWindow, Manager};
+use crate::utils::WindowDragAndDropExt;
 use tauri::{Emitter, Listener};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -122,7 +123,8 @@ async fn check_updates_if_due(app: &AppHandle) -> Result<bool, String> {
     check_updates(app, !settings.disable_update_popup).await
 }
 
-// 检测当前运行的程序是否为安装版
+// 检测当前运行的程序是否为安装版（Windows 注册表判定）
+#[cfg(target_os = "windows")]
 fn is_installed_version() -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
@@ -174,6 +176,12 @@ fn is_installed_version() -> bool {
     false
 }
 
+// 非 Windows 平台无注册表安装信息，一律视为便携版
+#[cfg(not(target_os = "windows"))]
+fn is_installed_version() -> bool {
+    false
+}
+
 pub fn start_update_checker(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let _ = check_updates_if_due(&app).await;
@@ -207,7 +215,7 @@ pub fn open_updater_window(app: &AppHandle, force_update: bool) -> Result<Webvie
     .visible(true)
     .focused(false)
     .focusable(false)
-    .drag_and_drop(false)
+    .drag_and_drop_cfg(false)
     .build()
     .map_err(|e| format!("创建更新窗口失败: {}", e))?;
 
@@ -401,4 +409,127 @@ async fn check_updates(app: &AppHandle, should_open_window: bool) -> Result<bool
 pub async fn check_updates_and_open_window(app: &AppHandle) -> Result<bool, String> {
     check_updates(app, true).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 环境变量是进程级全局量，与其它修改 env 的测试共享 ENV_LOCK 串行化。
+    const ENV_KEY: &str = "QC_TEST_PARSE_BOOL";
+
+    fn env_guard() -> parking_lot::MutexGuard<'static, ()> {
+        crate::startup_diagnostics::tests::ENV_LOCK.lock()
+    }
+
+    #[test]
+    fn parse_env_bool_accepts_truthy_variants() {
+        let _lock = env_guard();
+        for value in ["1", "true", "TRUE", " yes ", "y", "on", "On"] {
+            std::env::set_var(ENV_KEY, value);
+            assert_eq!(parse_env_bool(ENV_KEY), Some(true), "value={value:?} 应为 true");
+        }
+        std::env::remove_var(ENV_KEY);
+    }
+
+    #[test]
+    fn parse_env_bool_accepts_falsy_variants() {
+        let _lock = env_guard();
+        for value in ["0", "false", "FALSE", " no ", "n", "off", "OFF"] {
+            std::env::set_var(ENV_KEY, value);
+            assert_eq!(parse_env_bool(ENV_KEY), Some(false), "value={value:?} 应为 false");
+        }
+        std::env::remove_var(ENV_KEY);
+    }
+
+    #[test]
+    fn parse_env_bool_rejects_invalid_and_unset() {
+        let _lock = env_guard();
+        std::env::remove_var(ENV_KEY);
+        assert_eq!(parse_env_bool(ENV_KEY), None, "未设置 -> None");
+        for value in ["", "maybe", "2", "t", "TRUE1", " yesyes "] {
+            std::env::set_var(ENV_KEY, value);
+            assert_eq!(parse_env_bool(ENV_KEY), None, "value={value:?} 应拒绝");
+        }
+        std::env::remove_var(ENV_KEY);
+    }
+
+    #[test]
+    fn is_prerelease_detects_markers_case_insensitively() {
+        for v in [
+            "1.2.3-alpha.1",
+            "1.2.3-beta.2",
+            "1.2.3-rc.3",
+            "1.2.3-dev",
+            "2.0.0-BETA",
+            "1.0.0.rc",
+        ] {
+            assert!(is_prerelease(v), "{v} 应判定为 prerelease");
+        }
+        for v in ["1.2.3", "2.0.0", "1.2.3-beat", "1.2.3release", "dx.1"] {
+            assert!(!is_prerelease(v), "{v} 不应判定为 prerelease");
+        }
+    }
+
+    #[test]
+    fn update_check_interval_normalizes_exact_strings_only() {
+        assert_eq!(normalize_update_check_interval("every3days"), "every3days");
+        assert_eq!(normalize_update_check_interval("weekly"), "weekly");
+        assert_eq!(normalize_update_check_interval("daily"), "daily");
+        assert_eq!(normalize_update_check_interval(""), "daily");
+        assert_eq!(normalize_update_check_interval("WEEKLY"), "daily", "大小写敏感");
+        assert_eq!(normalize_update_check_interval("garbage"), "daily");
+    }
+
+    #[test]
+    fn update_check_interval_seconds_are_exact() {
+        assert_eq!(update_check_interval_seconds("every3days"), 3 * 24 * 60 * 60);
+        assert_eq!(update_check_interval_seconds("weekly"), 7 * 24 * 60 * 60);
+        assert_eq!(update_check_interval_seconds("daily"), 24 * 60 * 60);
+        assert_eq!(update_check_interval_seconds("garbage"), 24 * 60 * 60);
+        assert_eq!(update_check_interval_seconds(""), 24 * 60 * 60);
+    }
+
+    #[test]
+    fn beta_channel_setting_overrides_env_and_prerelease() {
+        let _lock = env_guard();
+        std::env::remove_var("QC_UPDATE_CHANNEL");
+        let with_setting = crate::services::AppSettings {
+            include_beta_updates: Some(true),
+            ..crate::services::AppSettings::default()
+        };
+        assert!(
+            resolve_use_beta_channel(&with_setting, false),
+            "include_beta_updates=Some(true) 优先于非 prerelease"
+        );
+        let without = crate::services::AppSettings {
+            include_beta_updates: Some(false),
+            ..crate::services::AppSettings::default()
+        };
+        assert!(
+            !resolve_use_beta_channel(&without, true),
+            "include_beta_updates=Some(false) 覆盖 prerelease"
+        );
+    }
+
+    #[test]
+    fn beta_channel_env_then_prerelease_fallback() {
+        let _lock = env_guard();
+        let settings = crate::services::AppSettings {
+            include_beta_updates: None,
+            ..crate::services::AppSettings::default()
+        };
+        std::env::set_var("QC_UPDATE_CHANNEL", "beta");
+        assert!(resolve_use_beta_channel(&settings, false), "env=beta -> true");
+        std::env::set_var("QC_UPDATE_CHANNEL", "BETA");
+        assert!(resolve_use_beta_channel(&settings, false), "env=BETA 大小写不敏感");
+        std::env::set_var("QC_UPDATE_CHANNEL", "stable");
+        assert!(!resolve_use_beta_channel(&settings, true), "env=stable -> false");
+        std::env::set_var("QC_UPDATE_CHANNEL", "nightly");
+        assert!(resolve_use_beta_channel(&settings, true), "未知 env 值 -> 跟随 prerelease");
+        std::env::remove_var("QC_UPDATE_CHANNEL");
+        assert!(resolve_use_beta_channel(&settings, true), "无 env -> prerelease=true");
+        assert!(!resolve_use_beta_channel(&settings, false), "无 env -> prerelease=false");
+    }
+}
+
 

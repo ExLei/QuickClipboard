@@ -74,3 +74,51 @@ pub fn save_app_icon(exe_path: &str) -> Option<String> {
     
     Some(hash)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_icon() -> file_icon_provider::Icon {
+        file_icon_provider::Icon {
+            width: 2,
+            height: 2,
+            pixels: vec![
+                255, 0, 0, 255, // red
+                0, 255, 0, 255, // green
+                0, 0, 255, 255, // blue
+                255, 255, 255, 255, // white
+            ],
+        }
+    }
+
+    #[test]
+    fn icon_to_png_encodes_rgba_pixels_as_png() {
+        let png = icon_to_png(&test_icon()).expect("png encoding should succeed");
+        // PNG 魔数
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]));
+        // IHDR: 8 字节签名 + 4 字节长度 + 4 字节 "IHDR" → 宽高在字节 16..24（大端）
+        assert_eq!(&png[16..20], &[0, 0, 0, 2]);
+        assert_eq!(&png[20..24], &[0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn icon_to_png_rejects_pixel_buffer_size_mismatch() {
+        let bad = file_icon_provider::Icon {
+            width: 2,
+            height: 2,
+            pixels: vec![0, 0, 0, 0],
+        };
+        assert_eq!(icon_to_png(&bad), Err("创建图像失败".to_string()));
+    }
+
+    #[test]
+    fn icon_hash_is_first_16_hex_chars_of_sha256() {
+        // 标准 SHA-256 测试向量：sha256("")、sha256("a")、sha256("data") 的前 16 个十六进制字符
+        assert_eq!(calculate_icon_hash(b""), "e3b0c44298fc1c14");
+        assert_eq!(calculate_icon_hash(b"a"), "ca978112ca1bbdca");
+        assert_eq!(calculate_icon_hash(b"data"), "3a6eb0790f39ac87");
+        // 区分不同输入
+        assert_ne!(calculate_icon_hash(b"data"), calculate_icon_hash(b"datb"));
+    }
+}

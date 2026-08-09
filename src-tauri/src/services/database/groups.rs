@@ -495,7 +495,7 @@ fn is_empty_or_transparent_group_color(raw: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_group_icon, normalize_group_color, normalize_group_icon};
+    use super::{merge_group_icon, normalize_group_color, normalize_group_icon, is_canonical_group_color, is_empty_or_transparent_group_color};
 
     #[test]
     fn normalizes_group_color_variants() {
@@ -521,6 +521,41 @@ mod tests {
         assert_eq!(merge_group_icon("", ""), "ti ti-folder");
         assert_eq!(merge_group_icon("ti ti-star", "ti ti-tag"), "ti ti-tag");
     }
+
+    #[test]
+    fn normalizes_color_hex_and_numeric_edges() {
+        // 0X/0x 前缀十六进制
+        assert_eq!(normalize_group_color("0XFF3B82F6"), "#3b82f6");
+        assert_eq!(normalize_group_color("0x3b82f6"), "#3b82f6");
+        // 数值边界：0xFFFFFF 是最大不透明 RGB
+        assert_eq!(normalize_group_color("16777215"), "#ffffff");
+        // 0xFFFFFFFF：alpha=FF 时取 RGB
+        assert_eq!(normalize_group_color("4294967295"), "#ffffff");
+        // 2 位 hex 不支持 -> 默认
+        assert_eq!(normalize_group_color("#ab"), "#dc2626");
+        // 非 hex 字符 -> 默认
+        assert_eq!(normalize_group_color("#GGGGGG"), "#dc2626");
+        // 8 位 hex 且 alpha=0 -> 默认（透明色无效）
+        assert_eq!(normalize_group_color("#00ff00ff"), "#dc2626");
+        // 7 位 hex -> 默认
+        assert_eq!(normalize_group_color("#1234567"), "#dc2626");
+    }
+
+    #[test]
+    fn canonical_and_transparent_color_detection() {
+        assert!(is_canonical_group_color("#dc2626"));
+        // 实现只检查长度/前缀/hex 字符，大小写均视为规范形式
+        assert!(is_canonical_group_color("#DC2626"), "大写 hex 也是规范形式");
+        assert!(!is_canonical_group_color("dc2626"), "缺 # 前缀非规范");
+        assert!(!is_canonical_group_color(""));
+        assert!(!is_canonical_group_color("#1234567"), "7 位非规范");
+
+        assert!(is_empty_or_transparent_group_color(""));
+        assert!(is_empty_or_transparent_group_color("0"));
+        assert!(is_empty_or_transparent_group_color("#00ff00ff"), "alpha=0 的 8 位 hex 视为透明");
+        assert!(!is_empty_or_transparent_group_color("#ff3b82f6"));
+        assert!(!is_empty_or_transparent_group_color("#dc2626"));
+    }
 }
 
 // 更新分组排序
@@ -541,3 +576,83 @@ pub fn reorder_groups(group_orders: Vec<(String, i32)>) -> Result<(), String> {
     })
 }
 
+
+// 分组删除行为契约测试（与上面纯函数测试分开放置，避免移动既有代码）
+#[cfg(test)]
+mod group_behavior_tests {
+    use super::*;
+    use crate::services::database::connection::test_support::{TestDb, TEST_ENV_LOCK};
+
+    fn seed_favorite(db: &TestDb, id: &str, group: &str) {
+        db.exec(
+            "INSERT INTO favorites (id, title, content, content_type, group_name, item_order, created_at, updated_at) VALUES (?1, '', 'abc', 'text', ?2, 1, 1000, 1000)",
+            &[&id, &group],
+        );
+    }
+
+    // b_group_protection
+    #[test]
+    fn default_group_cannot_be_deleted() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        seed_favorite(&db, "f1", "全部");
+
+        let err = delete_group("全部".to_string()).expect_err("删除'全部'必须报错");
+        assert!(err.contains("不能删除"), "实际错误: {}", err);
+        assert_eq!(db.count("sync_tombstones"), 0, "不写墓碑");
+        let group = db
+            .query_row("SELECT group_name FROM favorites WHERE id = 'f1'", &[], |r| r.get::<_, String>(0))
+            .expect("收藏仍在");
+        assert_eq!(group, "全部", "收藏未被移动");
+    }
+
+    // b_group_delete_reassigns
+    #[test]
+    fn delete_group_records_tombstone_and_reassigns_favorites() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        add_group("work".to_string(), "ti ti-folder".to_string(), "#dc2626".to_string())
+            .expect("添加分组");
+        seed_favorite(&db, "f1", "work");
+        seed_favorite(&db, "f2", "work");
+
+        delete_group("work".to_string()).expect("删除应成功");
+
+        let group_count = db
+            .query_row("SELECT COUNT(*) FROM groups WHERE name = 'work'", &[], |r| r.get::<_, i64>(0))
+            .expect("分组查询");
+        assert_eq!(group_count, 0, "分组行删除");
+        let fav_groups: String = db
+            .query_row(
+                "SELECT GROUP_CONCAT(group_name, ',') FROM favorites WHERE id IN ('f1','f2') ORDER BY id",
+                &[],
+                |r| r.get(0),
+            )
+            .expect("收藏分组");
+        assert_eq!(fav_groups, "全部,全部", "收藏迁移到'全部'");
+        let (collection, item_id): (String, String) = db
+            .query_row(
+                "SELECT collection, item_id FROM sync_tombstones",
+                &[],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("应有墓碑");
+        assert_eq!(collection, "groups");
+        assert_eq!(item_id, "work");
+    }
+
+    #[test]
+    fn delete_nonexistent_group_reassigns_without_tombstone() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        seed_favorite(&db, "f1", "ghost");
+
+        delete_group("ghost".to_string()).expect("删除不存在分组应 Ok");
+
+        let group = db
+            .query_row("SELECT group_name FROM favorites WHERE id = 'f1'", &[], |r| r.get::<_, String>(0))
+            .expect("收藏仍在");
+        assert_eq!(group, "全部", "收藏仍被迁移");
+        assert_eq!(db.count("sync_tombstones"), 0, "分组不存在 → 不写墓碑");
+    }
+}

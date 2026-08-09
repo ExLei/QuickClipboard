@@ -1,8 +1,13 @@
+use sha2::{Digest, Sha256};
 use std::env;
+use std::path::Path;
 
 pub const AUTO_START_ARG: &str = "--autostart";
 pub const ADMIN_RELAUNCH_ARG: &str = "--admin-relaunch";
 pub const UNINSTALL_CLEANUP_ARG: &str = "--uninstall-cleanup";
+
+const ADMIN_TASK_PREFIX: &str = "QuickClipboardAdmin-";
+const LEGACY_ADMIN_TASK_NAME: &str = "QuickClipboardAdmin";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StartupLaunchContext {
@@ -10,9 +15,12 @@ pub struct StartupLaunchContext {
     pub admin_relaunch: bool,
 }
 
-pub fn launch_context() -> StartupLaunchContext {
+fn parse_launch_args<I>(args: I) -> StartupLaunchContext
+where
+    I: IntoIterator<Item = String>,
+{
     let mut context = StartupLaunchContext::default();
-    for argument in env::args().skip(1) {
+    for argument in args {
         match argument.as_str() {
             AUTO_START_ARG => context.from_auto_start = true,
             ADMIN_RELAUNCH_ARG => context.admin_relaunch = true,
@@ -22,14 +30,88 @@ pub fn launch_context() -> StartupLaunchContext {
     context
 }
 
+pub fn launch_context() -> StartupLaunchContext {
+    parse_launch_args(env::args().skip(1))
+}
+
+fn has_uninstall_cleanup_arg<I>(args: I) -> bool
+where
+    I: IntoIterator<Item = String>,
+{
+    args.into_iter().any(|argument| argument == UNINSTALL_CLEANUP_ARG)
+}
+
 pub fn is_uninstall_cleanup_requested() -> bool {
-    env::args().skip(1).any(|argument| argument == UNINSTALL_CLEANUP_ARG)
+    has_uninstall_cleanup_arg(env::args().skip(1))
+}
+
+// ---- 以下纯函数供 Windows 平台模块与单元测试共用（不依赖 Windows API）----
+
+fn expected_registry_command(exe_path: &Path) -> Result<String, String> {
+    let path = exe_path.to_string_lossy();
+    if path.contains('"') || path.contains('\0') {
+        return Err("程序路径包含 Windows 启动项不支持的字符".to_string());
+    }
+    Ok(format!("\"{path}\" {AUTO_START_ARG}"))
+}
+
+fn startup_approved_enabled(bytes: &[u8]) -> bool {
+    match bytes.first().copied() {
+        Some(0x02) => true,
+        Some(0x03) => false,
+        _ if bytes.len() >= 8 => bytes.iter().rev().take(8).all(|byte| *byte == 0),
+        _ => true,
+    }
+}
+
+fn admin_task_arguments(auto_start: bool) -> String {
+    if auto_start {
+        format!("{ADMIN_RELAUNCH_ARG} {AUTO_START_ARG}")
+    } else {
+        ADMIN_RELAUNCH_ARG.to_string()
+    }
+}
+
+fn task_name_for_user(user: &str) -> String {
+    let digest = Sha256::digest(user.trim().to_lowercase().as_bytes());
+    format!("{ADMIN_TASK_PREFIX}{}", hex::encode(&digest[..8]))
+}
+
+fn task_user_matches(actual: &str, expected_user: &str, expected_domain: &str) -> bool {
+    let actual = actual.trim();
+    let expected_user = expected_user.trim();
+    if actual.eq_ignore_ascii_case(expected_user) {
+        return true;
+    }
+
+    let expected_domain = expected_domain.trim();
+    let (expected_qualified_domain, expected_account) = expected_user
+        .rsplit_once('\\')
+        .unwrap_or((expected_domain, expected_user));
+
+    match actual.rsplit_once('\\') {
+        Some((actual_domain, actual_user)) => {
+            actual_user.eq_ignore_ascii_case(expected_account)
+                && actual_domain.eq_ignore_ascii_case(expected_qualified_domain)
+        }
+        None => actual.eq_ignore_ascii_case(expected_account),
+    }
+}
+
+fn is_managed_task_name(task_name: &str) -> bool {
+    let Some(suffix) = task_name.strip_prefix(ADMIN_TASK_PREFIX) else {
+        return task_name == LEGACY_ADMIN_TASK_NAME;
+    };
+    suffix.len() == 16 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use super::{ADMIN_RELAUNCH_ARG, AUTO_START_ARG};
-    use sha2::{Digest, Sha256};
+    use super::{
+        ADMIN_RELAUNCH_ARG, AUTO_START_ARG, LEGACY_ADMIN_TASK_NAME, admin_task_arguments,
+        expected_registry_command, is_managed_task_name, startup_approved_enabled,
+        task_name_for_user, task_user_matches,
+    };
     use std::collections::HashSet;
     use std::env;
     use std::ffi::{OsStr, OsString};
@@ -68,8 +150,6 @@ mod platform {
         r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     const STARTUP_STATE_KEY: &str = r"Software\QuickClipboard\Startup";
     const ADMIN_TASK_NAME_VALUE: &str = "AdminTaskName";
-    const LEGACY_ADMIN_TASK_NAME: &str = "QuickClipboardAdmin";
-    const ADMIN_TASK_PREFIX: &str = "QuickClipboardAdmin-";
 
     struct ComApartment {
         should_uninitialize: bool,
@@ -361,23 +441,6 @@ mod platform {
         }
     }
 
-    fn expected_registry_command(exe_path: &Path) -> Result<String, String> {
-        let path = exe_path.to_string_lossy();
-        if path.contains('"') || path.contains('\0') {
-            return Err("程序路径包含 Windows 启动项不支持的字符".to_string());
-        }
-        Ok(format!("\"{path}\" {AUTO_START_ARG}"))
-    }
-
-    fn startup_approved_enabled(bytes: &[u8]) -> bool {
-        match bytes.first().copied() {
-            Some(0x02) => true,
-            Some(0x03) => false,
-            _ if bytes.len() >= 8 => bytes.iter().rev().take(8).all(|byte| *byte == 0),
-            _ => true,
-        }
-    }
-
     fn ensure_admin_task(auto_start: bool) -> Result<(), String> {
         if !is_running_as_admin() {
             return Err("创建管理员启动任务需要管理员权限".to_string());
@@ -653,14 +716,6 @@ mod platform {
         result.0 as usize > 32
     }
 
-    fn admin_task_arguments(auto_start: bool) -> String {
-        if auto_start {
-            format!("{ADMIN_RELAUNCH_ARG} {AUTO_START_ARG}")
-        } else {
-            ADMIN_RELAUNCH_ARG.to_string()
-        }
-    }
-
     fn current_exe() -> Result<PathBuf, String> {
         let path = env::current_exe().map_err(|error| format!("获取程序路径失败: {error}"))?;
         if !path.is_file() {
@@ -680,39 +735,6 @@ mod platform {
             .unwrap_or(&text)
             .trim_end_matches('\\')
             .to_lowercase()
-    }
-
-    fn task_name_for_user(user: &str) -> String {
-        let digest = Sha256::digest(user.trim().to_lowercase().as_bytes());
-        format!("{ADMIN_TASK_PREFIX}{}", hex::encode(&digest[..8]))
-    }
-
-    fn task_user_matches(actual: &str, expected_user: &str, expected_domain: &str) -> bool {
-        let actual = actual.trim();
-        let expected_user = expected_user.trim();
-        if actual.eq_ignore_ascii_case(expected_user) {
-            return true;
-        }
-
-        let expected_domain = expected_domain.trim();
-        let (expected_qualified_domain, expected_account) = expected_user
-            .rsplit_once('\\')
-            .unwrap_or((expected_domain, expected_user));
-
-        match actual.rsplit_once('\\') {
-            Some((actual_domain, actual_user)) => {
-                actual_user.eq_ignore_ascii_case(expected_account)
-                    && actual_domain.eq_ignore_ascii_case(expected_qualified_domain)
-            }
-            None => actual.eq_ignore_ascii_case(expected_account),
-        }
-    }
-
-    fn is_managed_task_name(task_name: &str) -> bool {
-        let Some(suffix) = task_name.strip_prefix(ADMIN_TASK_PREFIX) else {
-            return task_name == LEGACY_ADMIN_TASK_NAME;
-        };
-        suffix.len() == 16 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
     }
 
     fn store_admin_task_name(task_name: &str) -> Result<(), String> {
@@ -885,4 +907,140 @@ pub fn try_elevate_and_restart(_auto_start: bool) -> Result<bool, String> {
 #[cfg(not(target_os = "windows"))]
 pub fn cleanup_startup_entries() -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_args_recognize_autostart_flag() {
+        let context = parse_launch_args(vec!["--autostart".to_string()]);
+        assert!(context.from_auto_start);
+        assert!(!context.admin_relaunch);
+    }
+
+    #[test]
+    fn launch_args_recognize_admin_relaunch_flag() {
+        let context = parse_launch_args(vec!["--admin-relaunch".to_string()]);
+        assert!(!context.from_auto_start);
+        assert!(context.admin_relaunch);
+    }
+
+    #[test]
+    fn launch_args_combine_flags_and_ignore_unknown() {
+        let context = parse_launch_args(vec![
+            "--unknown".to_string(),
+            "--admin-relaunch".to_string(),
+            "--autostart".to_string(),
+            "positional".to_string(),
+        ]);
+        assert!(context.from_auto_start);
+        assert!(context.admin_relaunch);
+    }
+
+    #[test]
+    fn launch_args_default_to_false_without_flags() {
+        let context = parse_launch_args(Vec::<String>::new());
+        assert!(!context.from_auto_start);
+        assert!(!context.admin_relaunch);
+    }
+
+    #[test]
+    fn uninstall_cleanup_flag_is_exact_match() {
+        // 正例用字面量（不用常量），并验证前缀扩展不会误命中
+        assert!(has_uninstall_cleanup_arg(vec!["--uninstall-cleanup".to_string()]));
+        assert!(!has_uninstall_cleanup_arg(vec!["--autostart".to_string()]));
+        assert!(!has_uninstall_cleanup_arg(vec!["--uninstall-cleanup-extra".to_string()]));
+        assert!(!has_uninstall_cleanup_arg(vec![format!("x{UNINSTALL_CLEANUP_ARG}")]));
+    }
+
+    #[test]
+    fn registry_command_quotes_path_and_appends_autostart() {
+        assert_eq!(
+            expected_registry_command(Path::new(r"C:\Program Files\QuickClipboard.exe")).unwrap(),
+            r#""C:\Program Files\QuickClipboard.exe" --autostart"#
+        );
+    }
+
+    #[test]
+    fn registry_command_rejects_quotes_and_nul() {
+        assert_eq!(
+            expected_registry_command(Path::new(r#"C:\a"b.exe"#)).unwrap_err(),
+            "程序路径包含 Windows 启动项不支持的字符"
+        );
+        assert_eq!(
+            expected_registry_command(Path::new("C:\\a\0b.exe")).unwrap_err(),
+            "程序路径包含 Windows 启动项不支持的字符"
+        );
+    }
+
+    #[test]
+    fn startup_approved_state_semantics() {
+        // 0x02 → 启用，0x03 → 禁用
+        assert!(startup_approved_enabled(&[0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(!startup_approved_enabled(&[0x03, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]));
+        // 非 0x02/0x03 且长度 ≥8：后 8 字节全零 → 启用
+        assert!(startup_approved_enabled(&[0x04, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(!startup_approved_enabled(&[0x04, 0, 0, 0, 0, 0, 0, 0, 1]));
+        // 长度 <8 且非 0x02/0x03 → 启用（宽松默认）
+        assert!(startup_approved_enabled(&[0x04, 0, 0, 0]));
+        assert!(startup_approved_enabled(&[]));
+    }
+
+    #[test]
+    fn admin_task_arguments_exact_strings() {
+        assert_eq!(admin_task_arguments(false), "--admin-relaunch");
+        assert_eq!(admin_task_arguments(true), "--admin-relaunch --autostart");
+    }
+
+    #[test]
+    fn task_name_format_is_prefix_plus_16_hex() {
+        let name = task_name_for_user("Example\\User");
+        assert!(name.starts_with("QuickClipboardAdmin-"));
+        let suffix = name.strip_prefix("QuickClipboardAdmin-").unwrap();
+        assert_eq!(suffix.len(), 16);
+        assert!(suffix.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn task_name_is_case_and_whitespace_stable() {
+        assert_eq!(task_name_for_user("DOMAIN\\User"), task_name_for_user("domain\\user"));
+        assert_eq!(task_name_for_user(" User "), task_name_for_user("user"));
+    }
+
+    #[test]
+    fn task_user_matches_domain_and_account() {
+        assert!(task_user_matches("TestUser", "TestUser", "EXAMPLE-PC"));
+        assert!(task_user_matches(r"EXAMPLE-PC\testuser", "TestUser", "EXAMPLE-PC"));
+        assert!(task_user_matches("TestUser", r"EXAMPLE-PC\TestUser", "EXAMPLE-PC"));
+        assert!(!task_user_matches(r"OTHER-PC\TestUser", "TestUser", "EXAMPLE-PC"));
+        assert!(!task_user_matches(r"EXAMPLE-PC\OtherUser", "TestUser", "EXAMPLE-PC"));
+        assert!(!task_user_matches("", "TestUser", "EXAMPLE-PC"));
+    }
+
+    #[test]
+    fn managed_task_name_validation() {
+        let name = task_name_for_user("User");
+        assert!(is_managed_task_name(&name));
+        assert!(is_managed_task_name("QuickClipboardAdmin"));
+        assert!(!is_managed_task_name("QuickClipboardAdmin-"));
+        assert!(!is_managed_task_name("QuickClipboardAdmin-1234567890abcde")); // 15 hex
+        assert!(!is_managed_task_name("QuickClipboardAdmin-1234567890abcdefg")); // 非 hex
+        assert!(!is_managed_task_name("QuickClipboardAdmin-../../OtherTask"));
+        assert!(!is_managed_task_name("OtherTask"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_startup_surface_is_inert() {
+        assert!(!is_running_as_admin());
+        assert_eq!(configure_auto_start(true, false), Err("自启动配置目前仅支持 Windows".to_string()));
+        assert_eq!(get_auto_start_status(false), Ok(false));
+        assert_eq!(is_admin_task_ready(true), Ok(false));
+        assert_eq!(try_elevate_and_restart(true), Ok(false));
+        assert_eq!(switch_to_standard_mode(true), Ok(()));
+        assert_eq!(cleanup_startup_entries(), Ok(()));
+        assert_eq!(repair_startup_configuration(true, false), Ok(()));
+    }
 }

@@ -5,6 +5,9 @@ pub mod favorites;
 pub mod groups;
 pub mod tombstones;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use models::*;
 pub use connection::init_database;
 pub use clipboard::*;
@@ -50,4 +53,3 @@ pub struct WebdavLocalSyncSignature {
     pub groups: String,
     pub tombstones: String,
 }
-

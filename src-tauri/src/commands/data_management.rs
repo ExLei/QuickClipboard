@@ -94,3 +94,59 @@ pub fn dm_reset_all_data(app: tauri::AppHandle) -> Result<String, String> {
 pub fn dm_list_backups() -> Result<Vec<crate::services::data_management::BackupInfo>, String> {
     crate::services::data_management::list_backups()
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn change_path_payload_accepts_both_key_spellings_and_defaults_mode() {
+        let p1: ChangePathPayload = serde_json::from_str(r#"{"new_path": "/tmp/a"}"#).unwrap();
+        assert_eq!(p1.new_path, "/tmp/a");
+        assert_eq!(p1.mode, "source_only");
+
+        let p2: ChangePathPayload =
+            serde_json::from_str(r#"{"newPath": "/tmp/b", "mode": "move"}"#).unwrap();
+        assert_eq!(p2.new_path, "/tmp/b");
+        assert_eq!(p2.mode, "move");
+    }
+
+    #[test]
+    fn check_target_payload_accepts_both_key_spellings() {
+        let p1: CheckTargetPayload = serde_json::from_str(r#"{"target_path": "/tmp/x"}"#).unwrap();
+        assert_eq!(p1.target_path, "/tmp/x");
+        let p2: CheckTargetPayload = serde_json::from_str(r#"{"targetPath": "/tmp/y"}"#).unwrap();
+        assert_eq!(p2.target_path, "/tmp/y");
+    }
+
+    #[test]
+    fn export_payload_accepts_both_key_spellings() {
+        let p1: ExportPayload = serde_json::from_str(r#"{"target_path": "/tmp/out.zip"}"#).unwrap();
+        assert_eq!(p1.target_path, "/tmp/out.zip");
+        let p2: ExportPayload = serde_json::from_str(r#"{"targetPath": "/tmp/out2.zip"}"#).unwrap();
+        assert_eq!(p2.target_path, "/tmp/out2.zip");
+    }
+
+    #[test]
+    fn import_payload_accepts_both_key_spellings() {
+        let p1: ImportPayload =
+            serde_json::from_str(r#"{"zip_path": "/tmp/in.zip", "mode": "replace"}"#).unwrap();
+        assert_eq!(p1.zip_path, "/tmp/in.zip");
+        assert_eq!(p1.mode, "replace");
+        let p2: ImportPayload =
+            serde_json::from_str(r#"{"zipPath": "/tmp/in2.zip", "mode": "merge"}"#).unwrap();
+        assert_eq!(p2.zip_path, "/tmp/in2.zip");
+        assert_eq!(p2.mode, "merge");
+    }
+
+    #[test]
+    fn import_payload_requires_mode_field() {
+        // 与 ChangePathPayload/ResetPathPayload 不同，ImportPayload.mode 无默认值，必须显式提供
+        assert!(serde_json::from_str::<ImportPayload>(r#"{"zip_path": "/tmp/in.zip"}"#).is_err());
+    }
+
+    #[test]
+    fn reset_path_payload_defaults_mode_to_source_only() {
+        let p: ResetPathPayload = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.mode, "source_only");
+    }
+}

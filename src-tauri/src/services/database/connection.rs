@@ -477,6 +477,156 @@ where
     f(conn).map_err(|e| format!("数据库操作失败: {}", e))
 }
 
+// 测试支撑：串行化所有触碰全局 DB 连接 / 全局设置 / 全局监控状态的测试，
+// 并把 settings 的数据目录重定向到测试二进制旁的 data/，避免污染真实用户数据。
+#[cfg(test)]
+pub mod test_support {
+    use super::{close_database, init_database, with_connection};
+    use parking_lot::Mutex;
+    use rusqlite::OptionalExtension;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::LazyLock;
+
+    /// 全局测试环境锁：cargo test 的线程并行执行，而 DB 连接 / 设置 / 监控状态
+    /// 都是进程级全局量，触碰它们的测试必须串行。
+    pub static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    /// 在测试二进制旁放置 portable.flag，使 settings 层把数据目录解析为
+    /// `<exe>/data`（而不是开发者真实的 `~/.local/share/quickclipboard`）。
+    /// 必须在进程内第一次访问 settings / store 之前调用（幂等）。
+    pub fn ensure_isolated_settings_env() {
+        let exe_dir = std::env::current_exe()
+            .expect("测试进程 current_exe")
+            .parent()
+            .expect("exe 父目录")
+            .to_path_buf();
+        let flag = exe_dir.join("portable.flag");
+        if !flag.exists() {
+            let _ = std::fs::write(&flag, b"test");
+        }
+    }
+
+    /// 隔离后的数据目录（portable 模式 = `<exe>/data`）。
+    pub fn isolated_data_dir() -> PathBuf {
+        ensure_isolated_settings_env();
+        std::env::current_exe()
+            .expect("current_exe")
+            .parent()
+            .expect("exe 父目录")
+            .join("data")
+    }
+
+    /// 测试期间改动全局设置后，Drop 时恢复原值。
+    pub struct SettingsGuard(pub crate::services::settings::AppSettings);
+
+    impl Drop for SettingsGuard {
+        fn drop(&mut self) {
+            let _ = crate::services::update_settings(self.0.clone());
+        }
+    }
+
+    /// 独立临时数据库：init_database 到临时文件，Drop 时 close + 清理目录。
+    pub struct TestDb {
+        pub dir: PathBuf,
+        pub db_path: PathBuf,
+    }
+
+    impl TestDb {
+        pub fn new() -> Self {
+            ensure_isolated_settings_env();
+            let seq = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
+            let dir = std::env::temp_dir().join(format!(
+                "qc_test_db_{}_{}_{}",
+                std::process::id(),
+                seq,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&dir).expect("创建测试数据库目录");
+            let db_path = dir.join("test.db");
+            init_database(db_path.to_str().expect("db 路径必须为 UTF-8"))
+                .expect("初始化测试数据库");
+            TestDb { dir, db_path }
+        }
+
+        pub fn data_dir(&self) -> PathBuf {
+            isolated_data_dir()
+        }
+
+        /// 在数据目录 clipboard_images/ 下写入一个假图片文件，返回相对存储路径。
+        pub fn create_fake_image(&self, stem: &str) -> String {
+            let images_dir = self.data_dir().join("clipboard_images");
+            std::fs::create_dir_all(&images_dir).expect("创建 clipboard_images 目录");
+            let path = images_dir.join(format!("{}.png", stem));
+            std::fs::write(&path, b"fake-png-bytes").expect("写入假图片");
+            format!("clipboard_images/{}.png", stem)
+        }
+
+        /// 执行种子 SQL，返回 last_insert_rowid。
+        pub fn exec(&self, sql: &str, params: &[&dyn rusqlite::ToSql]) -> i64 {
+            with_connection(|conn| {
+                conn.execute(sql, params)?;
+                Ok(conn.last_insert_rowid())
+            })
+            .expect("执行种子 SQL")
+        }
+
+        /// 查询一行，返回 Option。
+        pub fn query_row<T, F>(&self, sql: &str, params: &[&dyn rusqlite::ToSql], f: F) -> Option<T>
+        where
+            F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+        {
+            with_connection(|conn| conn.query_row(sql, params, f).optional().map_err(|e| e.into()))
+                .expect("查询种子数据")
+        }
+
+        pub fn count(&self, table: &str) -> i64 {
+            let sql = format!("SELECT COUNT(*) FROM {}", table);
+            self.query_row(&sql, &[], |r| r.get::<_, i64>(0))
+                .expect("count 查询")
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            close_database();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{ensure_isolated_settings_env, TestDb, TEST_ENV_LOCK};
+    use super::*;
+
+    #[test]
+    fn uninitialized_connection_reports_database_not_initialized() {
+        let _guard = TEST_ENV_LOCK.lock();
+        ensure_isolated_settings_env();
+        close_database();
+        let err = crate::services::database::get_clipboard_count()
+            .expect_err("未初始化时应报错");
+        assert_eq!(err, "数据库未初始化");
+    }
+
+    #[test]
+    fn initialized_connection_serves_queries() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        assert_eq!(
+            crate::services::database::get_clipboard_count().expect("查询应成功"),
+            0
+        );
+        assert!(db.db_path.exists());
+    }
+}
+
 
 // 清理文件和图片类型收藏项的自动生成标题
 fn migrate_favorites_auto_titles(conn: &Connection) {

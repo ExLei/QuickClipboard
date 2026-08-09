@@ -66,3 +66,24 @@ pub async fn drop_proxy_save_url(payload: DropProxySaveUrlRequest) -> Result<Dro
 pub async fn drop_proxy_cleanup_orphan_resources(min_age_ms: Option<u64>) -> Result<DropProxyCleanupPayload, String> {
     drop_proxy::cleanup_orphan_resources(min_age_ms.unwrap_or(DEFAULT_CLEANUP_MIN_AGE_MS)).await
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_resource_payload_deserializes_camel_case_with_exact_bytes() {
+        let p: DropProxySaveResourceRequest =
+            serde_json::from_str(r#"{"filename":"a.png","data":[1,2,3]}"#).unwrap();
+        assert_eq!(p.filename, "a.png");
+        assert_eq!(p.data, vec![1u8, 2, 3]);
+    }
+
+    #[test]
+    fn save_url_payload_deserializes_camel_case() {
+        let p: DropProxySaveUrlRequest =
+            serde_json::from_str(r#"{"filename":"page.html","url":"https://example.com/x"}"#)
+                .unwrap();
+        assert_eq!(p.filename, "page.html");
+        assert_eq!(p.url, "https://example.com/x");
+    }
+}

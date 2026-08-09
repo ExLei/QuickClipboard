@@ -1,13 +1,12 @@
 use crate::services::database::{
     clear_clipboard_history as db_clear_clipboard_history,
-    delete_clipboard_item as db_delete_clipboard_item, delete_clipboard_items as db_delete_clipboard_items,
-    get_clipboard_count,
-    get_clipboard_data_items, get_clipboard_item_by_id, limit_clipboard_history, move_clipboard_item_to_top,
-    move_clipboard_item_by_id as db_move_clipboard_item_by_id,
-    query_clipboard_items, update_clipboard_item as db_update_clipboard_item,
-    increment_paste_counts as db_increment_paste_counts,
-    toggle_pin_clipboard_item as db_toggle_pin,
-    ClipboardItem, PaginatedResult, QueryParams,
+    delete_clipboard_item as db_delete_clipboard_item,
+    delete_clipboard_items as db_delete_clipboard_items, get_clipboard_count,
+    get_clipboard_data_items, get_clipboard_item_by_id,
+    increment_paste_counts as db_increment_paste_counts, limit_clipboard_history,
+    move_clipboard_item_by_id as db_move_clipboard_item_by_id, move_clipboard_item_to_top,
+    query_clipboard_items, toggle_pin_clipboard_item as db_toggle_pin,
+    update_clipboard_item as db_update_clipboard_item, ClipboardItem, PaginatedResult, QueryParams,
 };
 use crate::services::paste::FilesData;
 use std::path::Path;
@@ -22,8 +21,10 @@ fn fill_file_exists(items: &mut [ClipboardItem]) {
 }
 
 fn check_and_fill_file_exists(item: &mut ClipboardItem) {
-    if !item.content.starts_with("files:") { return; }
-    
+    if !item.content.starts_with("files:") {
+        return;
+    }
+
     if let Ok(mut data) = serde_json::from_str::<FilesData>(&item.content[6..]) {
         for file in &mut data.files {
             let actual_path = resolve_stored_path(&file.path);
@@ -163,9 +164,9 @@ pub async fn paste_content(params: PasteParams, app: tauri::AppHandle) -> Result
     use crate::services::paste::PasteAction;
 
     let paste_action = match params.action.as_deref() {
-        Some(action) if !action.trim().is_empty() => {
-            Some(PasteAction::from_id(action).ok_or_else(|| format!("不支持的粘贴动作: {}", action))?)
-        }
+        Some(action) if !action.trim().is_empty() => Some(
+            PasteAction::from_id(action).ok_or_else(|| format!("不支持的粘贴动作: {}", action))?,
+        ),
         _ => None,
     };
 
@@ -263,7 +264,10 @@ pub fn clear_clipboard_history() -> Result<(), String> {
 }
 // 根据 ID 获取单个剪贴板项
 #[tauri::command]
-pub fn get_clipboard_item_by_id_cmd(id: i64, max_length: Option<usize>) -> Result<ClipboardItem, String> {
+pub fn get_clipboard_item_by_id_cmd(
+    id: i64,
+    max_length: Option<usize>,
+) -> Result<ClipboardItem, String> {
     use crate::services::database::get_clipboard_item_by_id_with_limit;
     let mut item = get_clipboard_item_by_id_with_limit(id, max_length)?
         .ok_or_else(|| format!("剪贴板项不存在: {}", id))?;
@@ -301,20 +305,18 @@ pub fn toggle_pin_clipboard_item(id: i64) -> Result<bool, String> {
 #[tauri::command]
 pub fn copy_image_to_clipboard(file_path: String) -> Result<(), String> {
     use image::ImageFormat;
+    use sha2::{Digest, Sha256};
     use std::io::Cursor;
-    use sha2::{Sha256, Digest};
-    
+
     let path = Path::new(&file_path);
     if !path.exists() {
         return Err(format!("图片文件不存在: {}", file_path));
     }
-    
-    // 统一转为 PNG 缓存，避免剪贴板直接依赖会被销毁的源文件
-    let image_data = std::fs::read(path)
-        .map_err(|e| format!("读取图片失败: {}", e))?;
 
-    let image = image::load_from_memory(&image_data)
-        .map_err(|e| format!("解码图片失败: {}", e))?;
+    // 统一转为 PNG 缓存，避免剪贴板直接依赖会被销毁的源文件
+    let image_data = std::fs::read(path).map_err(|e| format!("读取图片失败: {}", e))?;
+
+    let image = image::load_from_memory(&image_data).map_err(|e| format!("解码图片失败: {}", e))?;
     let mut png_data = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut png_data), ImageFormat::Png)
@@ -325,15 +327,13 @@ pub fn copy_image_to_clipboard(file_path: String) -> Result<(), String> {
 
     let data_dir = crate::services::get_data_directory()?;
     let clipboard_images_dir = data_dir.join("clipboard_images");
-    std::fs::create_dir_all(&clipboard_images_dir)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&clipboard_images_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     let saved_path = clipboard_images_dir.join(&filename);
     if !saved_path.exists() {
-        std::fs::write(&saved_path, &png_data)
-            .map_err(|e| format!("保存图片失败: {}", e))?;
+        std::fs::write(&saved_path, &png_data).map_err(|e| format!("保存图片失败: {}", e))?;
     }
-    
+
     crate::services::paste::clipboard_content::set_clipboard_image_file_recordable(
         &saved_path.to_string_lossy(),
     )
@@ -362,8 +362,7 @@ pub fn copy_files_to_clipboard(paths: Vec<String>) -> Result<(), String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let ctx = ClipboardContext::new()
-        .map_err(|e| format!("创建剪贴板上下文失败: {}", e))?;
+    let ctx = ClipboardContext::new().map_err(|e| format!("创建剪贴板上下文失败: {}", e))?;
 
     ctx.set_files(normalized_paths)
         .map_err(|e| format!("设置文件到剪贴板失败: {}", e))
@@ -373,19 +372,22 @@ pub fn copy_files_to_clipboard(paths: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 pub fn copy_clipboard_item(id: i64) -> Result<(), String> {
     use crate::services::paste::paste_handler::copy_clipboard_item as do_copy;
-    
-    let item = get_clipboard_item_by_id(id)?
-        .ok_or_else(|| format!("剪贴板项不存在: {}", id))?;
-    
+
+    let item = get_clipboard_item_by_id(id)?.ok_or_else(|| format!("剪贴板项不存在: {}", id))?;
+
     do_copy(&item)
 }
 
 #[tauri::command]
-pub fn get_clipboard_item_paste_options_cmd(id: i64) -> Result<Vec<crate::services::database::PasteOption>, String> {
-    let item = get_clipboard_item_by_id(id)?
-        .ok_or_else(|| format!("剪贴板项不存在: {}", id))?;
+pub fn get_clipboard_item_paste_options_cmd(
+    id: i64,
+) -> Result<Vec<crate::services::database::PasteOption>, String> {
+    let item = get_clipboard_item_by_id(id)?.ok_or_else(|| format!("剪贴板项不存在: {}", id))?;
     let raw_formats = get_clipboard_data_items("clipboard", &id.to_string())?;
-    Ok(crate::services::paste::options::build_paste_options(&item, &raw_formats))
+    Ok(crate::services::paste::options::build_paste_options(
+        &item,
+        &raw_formats,
+    ))
 }
 
 #[tauri::command]
@@ -398,8 +400,7 @@ pub async fn merge_copy_clipboard_items(ids: Vec<i64>) -> Result<(), String> {
         let items = ids
             .iter()
             .map(|id| {
-                get_clipboard_item_by_id(*id)?
-                    .ok_or_else(|| format!("剪贴板项不存在: {}", id))
+                get_clipboard_item_by_id(*id)?.ok_or_else(|| format!("剪贴板项不存在: {}", id))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -410,7 +411,10 @@ pub async fn merge_copy_clipboard_items(ids: Vec<i64>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn merge_paste_clipboard_items(ids: Vec<i64>, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn merge_paste_clipboard_items(
+    ids: Vec<i64>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let ids_for_emit = ids.clone();
     tokio::task::spawn_blocking(move || {
         if ids.is_empty() {
@@ -420,8 +424,7 @@ pub async fn merge_paste_clipboard_items(ids: Vec<i64>, app: tauri::AppHandle) -
         let items = ids
             .iter()
             .map(|id| {
-                get_clipboard_item_by_id(*id)?
-                    .ok_or_else(|| format!("剪贴板项不存在: {}", id))
+                get_clipboard_item_by_id(*id)?.ok_or_else(|| format!("剪贴板项不存在: {}", id))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -485,5 +488,234 @@ pub fn resolve_image_path(stored_path: String) -> Result<String, String> {
 fn notify_lan_change(reason: &'static str) {
     if let Some(app) = crate::services::clipboard::get_app_handle() {
         crate::services::sync_transfer::lan_notify_local_change(app, reason);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::paste::clipboard_content::FileInfo;
+
+    fn test_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("qc_cmd_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_item(content_type: &str, content: &str) -> ClipboardItem {
+        ClipboardItem {
+            id: 1,
+            uuid: None,
+            favorite_id: None,
+            source_device_id: None,
+            is_remote: false,
+            content: content.to_string(),
+            html_content: None,
+            content_type: content_type.to_string(),
+            image_id: None,
+            item_order: 0,
+            is_pinned: false,
+            paste_count: 0,
+            source_app: None,
+            source_icon_hash: None,
+            char_count: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn files_content(paths: &[&str]) -> String {
+        let data = FilesData {
+            files: paths
+                .iter()
+                .map(|p| FileInfo {
+                    path: p.to_string(),
+                    name: String::new(),
+                    size: 0,
+                    is_directory: false,
+                    icon_data: None,
+                    file_type: String::new(),
+                    exists: false,
+                    actual_path: None,
+                    width: None,
+                    height: None,
+                })
+                .collect(),
+            operation: String::new(),
+        };
+        format!("files:{}", serde_json::to_string(&data).unwrap())
+    }
+
+    #[test]
+    fn hydrate_file_item_marks_existing_and_missing_files() {
+        let dir = test_dir();
+        let existing = dir.join("existing.txt");
+        std::fs::write(&existing, "hello").unwrap();
+        let missing = dir.join("missing.txt");
+
+        let mut item = make_item(
+            "file",
+            &files_content(&[&existing.to_string_lossy(), &missing.to_string_lossy()]),
+        );
+
+        hydrate_clipboard_item_for_ui(&mut item);
+
+        let data: FilesData = serde_json::from_str(&item.content[6..]).unwrap();
+        assert_eq!(data.files.len(), 2);
+        assert_eq!(data.files[0].exists, true);
+        assert_eq!(
+            data.files[0].actual_path.as_deref(),
+            Some(existing.to_str().unwrap())
+        );
+        assert_eq!(data.files[1].exists, false);
+        assert_eq!(
+            data.files[1].actual_path.as_deref(),
+            Some(missing.to_str().unwrap())
+        );
+        let _ = std::fs::remove_file(&existing);
+    }
+
+    #[test]
+    fn hydrate_preserves_other_file_fields() {
+        let dir = test_dir();
+        let existing = dir.join("keep.txt");
+        std::fs::write(&existing, "x").unwrap();
+        let content = format!(
+            "files:{}",
+            serde_json::to_string(&FilesData {
+                files: vec![FileInfo {
+                    path: existing.to_string_lossy().to_string(),
+                    name: "keep.txt".to_string(),
+                    size: 1,
+                    is_directory: false,
+                    icon_data: None,
+                    file_type: "txt".to_string(),
+                    exists: false,
+                    actual_path: None,
+                    width: Some(10),
+                    height: Some(20),
+                }],
+                operation: "copy".to_string(),
+            })
+            .unwrap()
+        );
+        let mut item = make_item("image", &content);
+        hydrate_clipboard_item_for_ui(&mut item);
+        let data: FilesData = serde_json::from_str(&item.content[6..]).unwrap();
+        assert_eq!(data.operation, "copy");
+        assert_eq!(data.files[0].name, "keep.txt");
+        assert_eq!(data.files[0].size, 1);
+        assert_eq!(data.files[0].file_type, "txt");
+        assert_eq!(data.files[0].width, Some(10));
+        assert_eq!(data.files[0].height, Some(20));
+        assert_eq!(data.files[0].exists, true);
+        let _ = std::fs::remove_file(&existing);
+    }
+
+    #[test]
+    fn hydrate_leaves_non_file_types_untouched() {
+        let content = files_content(&["/tmp/irrelevant.txt"]);
+        let mut item = make_item("text", &content);
+        hydrate_clipboard_item_for_ui(&mut item);
+        assert_eq!(item.content, content);
+    }
+
+    #[test]
+    fn hydrate_leaves_malformed_files_json_untouched() {
+        let content = "files:{not valid json";
+        let mut item = make_item("file", content);
+        hydrate_clipboard_item_for_ui(&mut item);
+        assert_eq!(item.content, content);
+    }
+
+    #[test]
+    fn hydrate_leaves_non_files_prefix_untouched() {
+        let content = "/tmp/plain.txt";
+        let mut item = make_item("file", content);
+        hydrate_clipboard_item_for_ui(&mut item);
+        assert_eq!(item.content, content);
+    }
+
+    #[test]
+    fn copy_files_rejects_empty_list() {
+        let err = copy_files_to_clipboard(vec![]).unwrap_err();
+        assert_eq!(err, "没有可复制的文件");
+    }
+
+    #[test]
+    fn copy_files_rejects_blank_path() {
+        let err = copy_files_to_clipboard(vec!["   ".to_string()]).unwrap_err();
+        assert_eq!(err, "文件路径不能为空");
+    }
+
+    #[test]
+    fn copy_files_rejects_missing_path() {
+        let missing = test_dir().join("nope.txt");
+        let err = copy_files_to_clipboard(vec![missing.to_string_lossy().to_string()]).unwrap_err();
+        assert_eq!(err, format!("文件不存在: {}", missing.to_string_lossy()));
+    }
+
+    #[test]
+    fn copy_image_rejects_missing_file() {
+        let missing = test_dir().join("nope.png");
+        let err = copy_image_to_clipboard(missing.to_string_lossy().to_string()).unwrap_err();
+        assert_eq!(
+            err,
+            format!("图片文件不存在: {}", missing.to_string_lossy())
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_copy_requires_selection() {
+        let err = merge_copy_clipboard_items(vec![]).await.unwrap_err();
+        assert_eq!(err, "至少需要选择一项内容");
+    }
+
+    #[test]
+    fn resolve_image_path_resolves_stored_prefix_relative_to_data_dir() {
+        let _env = crate::services::database::connection::test_support::TEST_ENV_LOCK.lock();
+        crate::services::database::connection::test_support::ensure_isolated_settings_env();
+        let data_dir = crate::services::get_data_directory().unwrap();
+
+        // 前缀矩阵：三个存储目录 + 反斜杠/正斜杠两种写法，全部归一到 data_dir 下
+        let cases = [
+            ("clipboard_images\\abc.png", "clipboard_images\\abc.png"),
+            ("pin_images\\x.png", "pin_images\\x.png"),
+            ("image_library\\y.png", "image_library\\y.png"),
+            ("clipboard_images/abc.png", "clipboard_images\\abc.png"),
+            ("pin_images/x.png", "pin_images\\x.png"),
+            ("image_library/y.png", "image_library\\y.png"),
+        ];
+        for (input, joined_suffix) in cases {
+            assert_eq!(
+                resolve_image_path(input.to_string()).unwrap(),
+                data_dir.join(joined_suffix).to_string_lossy().to_string(),
+                "输入 {:?} 必须解析到 data_dir 下",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_image_path_passes_plain_path_through() {
+        let plain = "/tmp/plain.png";
+        assert_eq!(resolve_image_path(plain.to_string()).unwrap(), plain);
+    }
+
+    // get_clipboard_history 输出契约：PaginatedResult::new 的 has_more 边界
+    #[test]
+    fn paginated_result_has_more_boundary() {
+        let item = make_item("text", "x");
+        // offset + len == total → 无更多
+        let r = PaginatedResult::new(10, vec![item.clone(); 5], 5, 50);
+        assert_eq!(r.has_more, false);
+        // offset + len < total → 有更多
+        let r2 = PaginatedResult::new(11, vec![item.clone(); 5], 5, 50);
+        assert_eq!(r2.has_more, true);
+        // 空历史
+        let r3: PaginatedResult<ClipboardItem> = PaginatedResult::new(0, vec![], 0, 50);
+        assert_eq!(r3.has_more, false);
+        assert_eq!(r3.total_count, 0);
+        assert_eq!(r3.offset, 0);
+        assert_eq!(r3.limit, 50);
     }
 }

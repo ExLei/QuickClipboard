@@ -317,3 +317,92 @@ fn emit_main_window_refresh(app_handle: &AppHandle, report: &SyncReport) {
         let _ = crate::commands::window::emit_main_window_refresh_needed_event(app_handle);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        get_last_report, is_running, merged_uploaded_signature, stop, store_manual_report,
+        AUTO_PUSH_PENDING, AUTO_PUSH_VERSION, STOP_FLAG,
+    };
+    use std::sync::atomic::Ordering;
+    use crate::services::database::WebdavLocalSyncSignature;
+    use crate::services::webdav_sync::types::SyncReport;
+
+    fn signature(clipboard: &str, favorites: &str, groups: &str, tombstones: &str) -> WebdavLocalSyncSignature {
+        WebdavLocalSyncSignature {
+            clipboard: clipboard.to_string(),
+            favorites: favorites.to_string(),
+            groups: groups.to_string(),
+            tombstones: tombstones.to_string(),
+        }
+    }
+
+    #[test]
+    fn merged_uploaded_signature_advances_only_uploaded_parts() {
+        let previous = signature("old-c", "old-f", "old-g", "old-t");
+        let current = signature("new-c", "new-f", "new-g", "new-t");
+        let merged = merged_uploaded_signature(&previous, &current, true, false, false, false);
+        assert_eq!(merged.clipboard, "new-c");
+        assert_eq!(merged.favorites, "old-f");
+        assert_eq!(merged.groups, "old-g");
+        assert_eq!(merged.tombstones, "old-t");
+
+        let merged = merged_uploaded_signature(&previous, &current, true, true, true, true);
+        assert_eq!(merged.clipboard, "new-c");
+        assert_eq!(merged.favorites, "new-f");
+        assert_eq!(merged.groups, "new-g");
+        assert_eq!(merged.tombstones, "new-t");
+
+        let merged = merged_uploaded_signature(&previous, &current, false, false, false, false);
+        assert_eq!(merged, previous);
+    }
+
+    #[test]
+    fn store_manual_report_is_readable_via_get_last_report() {
+        let mut report = SyncReport::default();
+        report.pushed = 3;
+        report.pulled = 1;
+        report.pushed_clipboard = 3;
+        let returned = store_manual_report("push", report);
+        assert_eq!(returned.pushed, 3);
+        let stored = get_last_report().expect("report must be stored");
+        assert_eq!(stored.mode, "push");
+        assert_eq!(stored.result.pushed, 3);
+        assert_eq!(stored.result.pulled, 1);
+        assert!(!stored.automatic);
+
+        let mut second = SyncReport::default();
+        second.pulled_clipboard = 7;
+        store_manual_report("pull", second);
+        let stored = get_last_report().expect("second report must overwrite");
+        assert_eq!(stored.mode, "pull");
+        assert_eq!(stored.result.pulled_clipboard, 7);
+        assert_eq!(stored.result.pushed, 0);
+    }
+
+    #[test]
+    fn scheduler_initial_state_is_not_running() {
+        // 新进程内调度器从未 start 过：RUNNING 恒为 false
+        assert!(!is_running());
+    }
+
+    #[test]
+    fn stop_sets_stop_flag_bumps_version_and_clears_pending() {
+        // stop() 的可观察语义：置 STOP_FLAG、递增 AUTO_PUSH_VERSION
+        // （使已排队的延迟推送失效）、清空 AUTO_PUSH_PENDING。
+        let before_version = AUTO_PUSH_VERSION.load(Ordering::SeqCst);
+        STOP_FLAG.store(false, Ordering::SeqCst);
+        AUTO_PUSH_PENDING.store(true, Ordering::SeqCst);
+        stop();
+        assert!(STOP_FLAG.load(Ordering::SeqCst), "stop 必须置 STOP_FLAG");
+        assert_eq!(
+            AUTO_PUSH_VERSION.load(Ordering::SeqCst),
+            before_version + 1,
+            "stop 必须递增 AUTO_PUSH_VERSION"
+        );
+        assert!(
+            !AUTO_PUSH_PENDING.load(Ordering::SeqCst),
+            "stop 必须清空 AUTO_PUSH_PENDING"
+        );
+    }
+}

@@ -1212,3 +1212,394 @@ pub fn toggle_pin_clipboard_item(id: i64) -> Result<bool, String> {
     })
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database::connection::test_support::{TestDb, TEST_ENV_LOCK};
+    use crate::services::webdav_sync::types::CloudRecord;
+
+    fn seed_clip_row(db: &TestDb, uuid: &str, content: &str, item_order: i64, updated_at: i64) -> i64 {
+        db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, created_at, updated_at) VALUES (?1, 'text', ?2, ?3, 0, ?4, ?4)",
+            &[&content, &item_order, &uuid, &updated_at],
+        )
+    }
+
+    fn seed_clip_data(db: &TestDb, target_id: &str, format_name: &str, raw: &[u8]) {
+        db.exec(
+            "INSERT INTO clipboard_data (target_kind, target_id, format_name, raw_data, is_primary, format_order, created_at, updated_at) VALUES ('clipboard', ?1, ?2, ?3, 1, 0, 1000, 1000)",
+            &[&target_id, &format_name, &raw],
+        );
+    }
+
+    fn mk_record(uuid: &str, content: &str, updated_at: i64) -> CloudRecord {
+        CloudRecord {
+            uuid: uuid.to_string(),
+            source_device_id: "remote-dev".to_string(),
+            is_remote: false,
+            content: content.to_string(),
+            html_content: None,
+            content_type: "text".to_string(),
+            image_id: None,
+            source_app: None,
+            source_icon_hash: None,
+            char_count: None,
+            title: String::new(),
+            group_name: "全部".to_string(),
+            item_order: 1,
+            paste_count: 0,
+            created_at: 500,
+            updated_at,
+        }
+    }
+
+    // b_delete_writes_tombstone
+    #[test]
+    fn delete_writes_tombstone_and_removes_row_data_and_unreferenced_image() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let img_rel = db.create_fake_image("deadbeef");
+        let img_abs = db.data_dir().join(&img_rel);
+        assert!(img_abs.exists());
+
+        let id = seed_clip_row(&db, "u1", "abc", 1, 1000);
+        db.exec("UPDATE clipboard SET image_id = 'deadbeef' WHERE id = ?1", &[&id]);
+        seed_clip_data(&db, &id.to_string(), "CF_UNICODETEXT", b"abc");
+
+        delete_clipboard_item(id).expect("删除应成功");
+
+        assert_eq!(db.count("clipboard"), 0, "行被删除");
+        assert_eq!(db.count("clipboard_data"), 0, "raw 格式被删除");
+        let (collection, item_id, device, deleted_at): (String, String, String, i64) = db
+            .query_row(
+                "SELECT collection, item_id, source_device_id, deleted_at FROM sync_tombstones",
+                &[],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .expect("应有墓碑");
+        assert_eq!(collection, "history");
+        assert_eq!(item_id, "u1", "墓碑 item_id = 行 uuid");
+        assert_eq!(device, crate::services::sync_transfer::device_id());
+        let now = chrono::Local::now().timestamp();
+        assert!((now - deleted_at).abs() <= 5, "deleted_at 为删除时刻");
+        assert!(!img_abs.exists(), "无引用图片文件被删除");
+    }
+
+    #[test]
+    fn delete_keeps_image_file_when_favorite_still_references_it() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let img_rel = db.create_fake_image("stillalive");
+        let img_abs = db.data_dir().join(&img_rel);
+        let id = seed_clip_row(&db, "u1", "abc", 1, 1000);
+        db.exec("UPDATE clipboard SET image_id = 'stillalive' WHERE id = ?1", &[&id]);
+        db.exec(
+            "INSERT INTO favorites (id, title, content, content_type, image_id, group_name, item_order, created_at, updated_at) VALUES ('f1', '', 'abc', 'text', 'stillalive', '全部', 1, 1000, 1000)",
+            &[],
+        );
+
+        delete_clipboard_item(id).expect("删除应成功");
+        assert!(img_abs.exists(), "被收藏引用的图片文件应保留");
+    }
+
+    // b_tombstone_blocks_remote（含边界：>= 判定与反向边界）
+    #[test]
+    fn tombstone_blocks_remote_upsert_until_record_is_newer() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id = seed_clip_row(&db, "u1", "local", 1, 1000);
+        delete_clipboard_item(id).expect("删除应成功");
+        let (deleted_at,): (i64,) = db
+            .query_row("SELECT deleted_at FROM sync_tombstones", &[], |r| Ok((r.get(0)?,)))
+            .expect("应有墓碑");
+
+        // 边界：updated_at == deleted_at → 拦截（>= 判定）
+        let eq_record = mk_record("u1", "remote-eq", deleted_at);
+        let changed = lan_upsert_history_records(&[eq_record]).expect("upsert 不报错");
+        assert!(changed.is_empty(), "updated_at == deleted_at 必须被墓碑拦截");
+        assert_eq!(db.count("clipboard"), 0);
+
+        // 边界：updated_at < deleted_at → 拦截
+        let old_record = mk_record("u1", "remote-old", deleted_at - 100);
+        let changed = lan_upsert_history_records(&[old_record]).expect("upsert 不报错");
+        assert!(changed.is_empty());
+        assert_eq!(db.count("clipboard"), 0);
+
+        // 反向边界：updated_at = deleted_at + 1 → 生效，墓碑清除
+        let newer_record = mk_record("u1", "remote-new", deleted_at + 1);
+        let changed = lan_upsert_history_records(&[newer_record]).expect("upsert 不报错");
+        assert_eq!(changed.len(), 1);
+        let (content, is_remote, source_device): (String, i64, String) = db
+            .query_row(
+                "SELECT content, is_remote, source_device_id FROM clipboard WHERE uuid = 'u1'",
+                &[],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("应插入远端行");
+        assert_eq!(content, "remote-new");
+        assert_eq!(is_remote, 1, "远端记录 is_remote=1");
+        assert_eq!(source_device, "remote-dev");
+        assert_eq!(db.count("sync_tombstones"), 0, "记录比墓碑新 → 墓碑清除");
+    }
+
+    // b_repair_overrides_tombstone
+    #[test]
+    fn repair_overrides_tombstone_with_restored_timestamp() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id = seed_clip_row(&db, "u1", "local", 1, 1000);
+        delete_clipboard_item(id).expect("删除应成功");
+        let (deleted_at,): (i64,) = db
+            .query_row("SELECT deleted_at FROM sync_tombstones", &[], |r| Ok((r.get(0)?,)))
+            .expect("应有墓碑");
+
+        // 记录比墓碑旧 → repair 仍应用，updated_at = max(record, now, deleted_at+1)
+        let record = mk_record("u1", "restored", deleted_at - 100);
+        let changed = webdav_repair_history_records(&[record]).expect("repair 应成功");
+        assert_eq!(changed.len(), 1);
+        let restored_at = changed[0].updated_at;
+        assert!(restored_at >= deleted_at + 1, "restored = max(record, now, deleted_at+1)");
+        let (content, is_remote, updated_at): (String, i64, i64) = db
+            .query_row(
+                "SELECT content, is_remote, updated_at FROM clipboard WHERE uuid = 'u1'",
+                &[],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("应插入恢复行");
+        assert_eq!(content, "restored");
+        assert_eq!(is_remote, 1);
+        assert_eq!(updated_at, restored_at, "落库 updated_at = 返回的 restored 值");
+        assert_eq!(db.count("sync_tombstones"), 0, "恢复后墓碑清除");
+    }
+
+    #[test]
+    fn repair_exact_max_semantics_when_record_is_newest() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id = seed_clip_row(&db, "u2", "local", 1, 1000);
+        delete_clipboard_item(id).expect("删除应成功");
+        let (deleted_at,): (i64,) = db
+            .query_row("SELECT deleted_at FROM sync_tombstones", &[], |r| Ok((r.get(0)?,)))
+            .expect("应有墓碑");
+
+        // record.updated_at 远大于 now 和 deleted_at → restored 精确等于 record.updated_at
+        let far_future = deleted_at + 1_000_000;
+        let record = mk_record("u2", "future", far_future);
+        let changed = webdav_repair_history_records(&[record]).expect("repair 应成功");
+        assert_eq!(changed[0].updated_at, far_future, "max(record, now, deleted_at+1) = record");
+    }
+
+    // b_history_limit_trim
+    #[test]
+    fn history_limit_trims_beyond_top_n_pinned_first() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        // 置顶 1 条 + 未置顶 3 条（order 3/2/1，updated_at 3000/2000/1000）
+        db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, is_pinned, uuid, is_remote, created_at, updated_at, image_id) VALUES ('pinned', 'text', 10, 1, 'up', 0, 3000, 3000, 'keep-pinned')",
+            &[],
+        );
+        let id_u3 = seed_clip_row(&db, "u3", "row-3", 3, 3000);
+        let id_u2 = seed_clip_row(&db, "u2", "row-2", 2, 2000);
+        let id_u1 = seed_clip_row(&db, "u1", "row-1", 1, 1000);
+        seed_clip_data(&db, &id_u3.to_string(), "CF_UNICODETEXT", b"3");
+        seed_clip_data(&db, &id_u2.to_string(), "CF_UNICODETEXT", b"2");
+        seed_clip_data(&db, &id_u1.to_string(), "CF_UNICODETEXT", b"1");
+
+        limit_clipboard_history(3).expect("trim 应成功");
+
+        assert_eq!(db.count("clipboard"), 3, "保留 top-3");
+        let remaining: String = db
+            .query_row(
+                "SELECT GROUP_CONCAT(uuid, ',') FROM (SELECT uuid FROM clipboard ORDER BY is_pinned DESC, item_order DESC, updated_at DESC)",
+                &[],
+                |r| r.get(0),
+            )
+            .expect("剩余行");
+        assert_eq!(remaining, "up,u3,u2", "置顶优先，然后 order DESC");
+        // 被删行的 raw 格式一并删除
+        let orphan = db
+            .query_row(
+                "SELECT COUNT(*) FROM clipboard_data WHERE target_kind = 'clipboard' AND target_id = ?1",
+                &[&id_u1.to_string()],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("孤儿检查");
+        assert_eq!(orphan, 0);
+        assert!(db.query_row("SELECT id FROM clipboard WHERE uuid = 'u1'", &[], |r| r.get::<_, i64>(0)).is_none());
+    }
+
+    #[test]
+    fn history_limit_deletes_unreferenced_image_files_but_keeps_favorite_referenced() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let img_dead = db.create_fake_image("trimmed");
+        let img_alive = db.create_fake_image("favkept");
+        let dead_abs = db.data_dir().join(&img_dead);
+        let alive_abs = db.data_dir().join(&img_alive);
+
+        db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, created_at, updated_at, image_id) VALUES ('d', 'text', 1, 'ud', 0, 1000, 1000, 'trimmed')",
+            &[],
+        );
+        db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, created_at, updated_at, image_id) VALUES ('k', 'text', 2, 'uk', 0, 1000, 1000, 'favkept')",
+            &[],
+        );
+        db.exec(
+            "INSERT INTO favorites (id, title, content, content_type, image_id, group_name, item_order, created_at, updated_at) VALUES ('f1', '', 'k', 'text', 'favkept', '全部', 1, 1000, 1000)",
+            &[],
+        );
+
+        limit_clipboard_history(1).expect("trim 应成功");
+        assert!(!dead_abs.exists(), "无引用图片被删除");
+        assert!(alive_abs.exists(), "收藏引用的图片保留");
+    }
+
+    // 边界：history_limit >= 999999 完全跳过裁剪 —— 用 1,000,001 行验证“不删任何行”，
+    // 否则（去掉跳过）会裁到 top-999999。
+    #[test]
+    fn history_limit_skips_trimming_at_999999() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        db.exec(
+            "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < 1000001) \
+             INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, created_at, updated_at) \
+             SELECT 'x', 'text', x, 'u' || x, 0, 1, 1 FROM cnt",
+            &[],
+        );
+        assert_eq!(db.count("clipboard"), 1_000_001);
+        limit_clipboard_history(999999).expect("应跳过");
+        assert_eq!(db.count("clipboard"), 1_000_001, "999999 上限必须跳过裁剪");
+    }
+
+    // b_search_truncation
+    #[test]
+    fn search_truncates_around_keyword_and_filters_total_count() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let long = format!("{}needle{}", "前".repeat(3000), "后".repeat(3000));
+        let id = seed_clip_row(&db, "u1", &long, 1, 1000);
+        db.exec("UPDATE clipboard SET char_count = NULL WHERE id = ?1", &[&id]);
+        seed_clip_row(&db, "u2", "other stuff", 2, 2000);
+
+        let page = query_clipboard_items(QueryParams {
+            offset: 0,
+            limit: 50,
+            search: Some("needle".to_string()),
+            content_type: None,
+        })
+        .expect("查询应成功");
+
+        assert_eq!(page.total_count, 1, "total_count 反映过滤");
+        let item = &page.items[0];
+        // 与工具函数逐字节一致（keyword 居中截断）
+        assert_eq!(item.content, truncate_around_keyword(long.clone(), "needle", 1600));
+        assert!(item.content.len() <= 1600);
+        assert!(item.content.contains("needle"));
+        // char_count 为 NULL 时由查询就地计算（懒回填在异步线程）
+        assert_eq!(item.char_count, Some(long.chars().count() as i64));
+
+        // 无搜索：两条都在
+        let all = query_clipboard_items(QueryParams::default()).expect("查询应成功");
+        assert_eq!(all.total_count, 2);
+
+        // 等异步回填完成，避免把过期 (id, content) 写入后续测试的数据库
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let done = db
+                .query_row("SELECT char_count FROM clipboard WHERE id = ?1", &[&id], |r| r.get::<_, Option<i64>>(0))
+                .expect("读取 char_count")
+                .is_some();
+            if done || std::time::Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn non_textual_content_is_never_truncated() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let long_files = format!("files:{}", "x".repeat(3000));
+        seed_clip_row(&db, "u1", &long_files, 1, 1000);
+        db.exec("UPDATE clipboard SET content_type = 'file' WHERE uuid = 'u1'", &[]);
+
+        let page = query_clipboard_items(QueryParams::default()).expect("查询应成功");
+        let item = &page.items[0];
+        assert_eq!(item.content_type, "file");
+        assert_eq!(item.content.len(), long_files.len(), "非文本类型永不截断");
+        assert!(item.content.len() > 1600);
+    }
+
+    // b_pin_bucket_ordering
+    #[test]
+    fn pin_toggle_moves_bucket_and_query_orders_pinned_first() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id_a = seed_clip_row(&db, "ua", "a", 1, 1000);
+        let id_b = seed_clip_row(&db, "ub", "b", 2, 2000);
+        let id_c = seed_clip_row(&db, "uc", "c", 3, 3000);
+
+        assert!(toggle_pin_clipboard_item(id_b).expect("置顶应成功"), "返回 true = 已置顶");
+        let (is_pinned, item_order): (i64, i64) = db
+            .query_row(
+                "SELECT is_pinned, item_order FROM clipboard WHERE id = ?1",
+                &[&id_b],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("读取");
+        assert_eq!(is_pinned, 1);
+        assert_eq!(item_order, 1, "置顶桶空 → order = max(pinned)+1 = 1");
+
+        // 查询顺序：is_pinned DESC, item_order DESC, updated_at DESC
+        let page = query_clipboard_items(QueryParams::default()).expect("查询应成功");
+        let ids: Vec<i64> = page.items.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![id_b, id_c, id_a], "置顶优先，未置顶按 order DESC");
+    }
+
+    #[test]
+    fn cross_bucket_move_is_noop_and_move_to_top_bumps_order() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id_a = seed_clip_row(&db, "ua", "a", 1, 1000);
+        let id_b = seed_clip_row(&db, "ub", "b", 2, 2000);
+        assert!(toggle_pin_clipboard_item(id_b).expect("置顶应成功"));
+
+        // 跨桶移动：Ok 且不重排
+        move_clipboard_item_by_id(id_b, id_a).expect("跨桶移动应 Ok");
+        let (a_pin, a_order): (i64, i64) = db
+            .query_row("SELECT is_pinned, item_order FROM clipboard WHERE id = ?1", &[&id_a], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("读取");
+        let (b_pin, b_order): (i64, i64) = db
+            .query_row("SELECT is_pinned, item_order FROM clipboard WHERE id = ?1", &[&id_b], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("读取");
+        assert_eq!((a_pin, a_order), (0, 1), "未置顶项未被重排");
+        assert_eq!((b_pin, b_order), (1, 1), "置顶项未被重排");
+
+        // 取消置顶 → 未置顶桶 max+1
+        assert!(!toggle_pin_clipboard_item(id_b).expect("取消置顶应成功"), "返回 false = 已取消");
+        let (_, order): (i64, i64) = db
+            .query_row("SELECT is_pinned, item_order FROM clipboard WHERE id = ?1", &[&id_b], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("读取");
+        assert_eq!(order, 2, "未置顶桶 max(1)+1 = 2");
+
+        // move to top → max(unpinned)+1
+        move_clipboard_item_to_top(id_a).expect("移到顶部应成功");
+        let (_, order_a): (i64, i64) = db
+            .query_row("SELECT is_pinned, item_order FROM clipboard WHERE id = ?1", &[&id_a], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("读取");
+        assert_eq!(order_a, 3, "move to top = max(unpinned)+1 = 3");
+    }
+
+    // 错误语义：DB 未初始化时查询报错
+    #[test]
+    fn queries_fail_with_clear_error_when_db_closed() {
+        let _guard = TEST_ENV_LOCK.lock();
+        crate::services::database::connection::close_database();
+        let err = query_clipboard_items(QueryParams::default()).expect_err("应报错");
+        assert_eq!(err, "数据库未初始化");
+    }
+}

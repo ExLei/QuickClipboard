@@ -396,6 +396,7 @@ pub fn set_last_hash_text(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::database::connection::test_support::TEST_ENV_LOCK;
 
     fn mk_item() -> crate::services::database::ClipboardItem {
         crate::services::database::ClipboardItem {
@@ -417,6 +418,85 @@ mod tests {
             created_at: 1,
             updated_at: 1,
         }
+    }
+
+    // monitor_paused 状态机：计数 + 单调 max suppress-until
+    #[test]
+    fn pause_guard_holds_while_alive_and_unpauses_on_drop() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let pause = pause_clipboard_monitor_for(0);
+        assert!(is_clipboard_monitor_paused());
+        drop(pause);
+        assert!(!is_clipboard_monitor_paused());
+    }
+
+    #[test]
+    fn pause_is_refcounted_until_all_guards_drop() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let g1 = pause_clipboard_monitor_for(0);
+        let g2 = pause_clipboard_monitor_for(0);
+        assert!(is_clipboard_monitor_paused());
+        drop(g1);
+        assert!(is_clipboard_monitor_paused(), "计数未归零仍暂停");
+        drop(g2);
+        assert!(!is_clipboard_monitor_paused());
+    }
+
+    #[test]
+    fn suppress_until_is_max_of_concurrent_requests_and_outlives_guards() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let long = pause_clipboard_monitor_for(400);
+        let short = pause_clipboard_monitor_for(0);
+        drop(short);
+        drop(long);
+        // 计数已归零，但 suppress-until 仍在未来 → 依旧暂停（边界：until 未到期）
+        assert!(is_clipboard_monitor_paused());
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        // 边界：until 已过期且计数为 0 → 恢复
+        assert!(!is_clipboard_monitor_paused());
+    }
+
+    // b_exact_redetection_skip —— 预设哈希缓存（粘贴后抑制重复捕获的数据源）
+    #[test]
+    fn text_hash_preset_overwrites_cache_exactly() {
+        let _guard = TEST_ENV_LOCK.lock();
+        set_last_hash_text("abc");
+        // sha256("abc")
+        assert_eq!(
+            *LAST_CONTENT_HASHES.lock(),
+            vec!["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"]
+        );
+        clear_last_content_cache();
+        assert!(LAST_CONTENT_HASHES.lock().is_empty());
+    }
+
+    #[test]
+    fn malformed_files_preset_leaves_cache_untouched() {
+        let _guard = TEST_ENV_LOCK.lock();
+        set_last_hash_text("seed");
+        let before = LAST_CONTENT_HASHES.lock().clone();
+
+        set_last_hash_files("not-a-files-prefix");
+        set_last_hash_files("files:not-json");
+        assert_eq!(*LAST_CONTENT_HASHES.lock(), before, "非法输入不触碰缓存");
+
+        // 合法 JSON → 覆盖为规范化路径哈希
+        set_last_hash_files("files:{\"files\":[{\"path\":\"clipboard_images/abc.png\"}]}");
+        // sha256("clipboard_images/abc.png")
+        assert_eq!(
+            *LAST_CONTENT_HASHES.lock(),
+            vec!["fa03d77f9acfc8e0216b658ef02f0536d6026f26050550d74aca87f0b3b62656"]
+        );
+    }
+
+    #[test]
+    fn single_file_preset_normalizes_path_for_hash() {
+        let _guard = TEST_ENV_LOCK.lock();
+        set_last_hash_file("C:\\x\\clipboard_images\\abc.png");
+        assert_eq!(
+            *LAST_CONTENT_HASHES.lock(),
+            vec!["fa03d77f9acfc8e0216b658ef02f0536d6026f26050550d74aca87f0b3b62656"]
+        );
     }
 }
 

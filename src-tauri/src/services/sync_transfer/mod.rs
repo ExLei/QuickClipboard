@@ -104,3 +104,79 @@ pub async fn lan_send_file_to_peer_with_progress(
     let _ = lan::peer_store::mark_peer_seen(device_id);
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_infos_expose_webdav_and_lan() {
+        let infos = mode_infos();
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[1].mode, types::SyncMode::Lan);
+        assert_eq!(infos[1].backend, types::TransferBackend::LanHttp);
+    }
+
+    #[test]
+    fn device_id_passthrough_is_uuid() {
+        let id = device_id();
+        assert_eq!(id.len(), 36);
+        assert_eq!(&id[14..15], "4");
+    }
+
+    #[test]
+    fn lan_list_paired_peers_is_empty_without_store() {
+        assert!(lan_list_paired_peers().is_empty());
+    }
+
+    #[test]
+    fn lan_remove_paired_peer_returns_false_without_store() {
+        assert_eq!(lan_remove_paired_peer("missing"), Ok(false));
+    }
+
+    #[test]
+    fn lan_update_auto_sync_settings_errors_without_store() {
+        let err = lan_update_auto_sync_settings(lan::LanAutoSyncSettings::default()).unwrap_err();
+        assert_eq!(err, "AppHandle 未初始化");
+    }
+
+    #[test]
+    fn lan_auto_sync_status_defaults_without_store() {
+        let status = lan_auto_sync_status();
+        assert!(!status.settings.send_enabled);
+        assert!(!status.settings.receive_enabled);
+        assert!(status.last_report.is_none());
+    }
+
+    #[test]
+    fn lan_refresh_pairing_code_returns_full_attempts() {
+        let _guard = lan::runtime::tests::PAIRING_TEST_LOCK.lock();
+        let view = lan_refresh_pairing_code();
+        assert_eq!(view.pairing_code.len(), 6);
+        assert_eq!(view.remaining_attempts, 5);
+    }
+
+    #[tokio::test]
+    async fn lan_fetch_peer_snapshot_fails_without_paired_peer() {
+        let err = lan_fetch_peer_snapshot("missing-device").await.unwrap_err();
+        assert_eq!(err, "未找到已配对设备");
+    }
+
+    #[tokio::test]
+    async fn lan_push_to_peer_fails_without_paired_peer() {
+        let err = lan_push_to_peer("missing-device").await.unwrap_err();
+        assert_eq!(err, "未找到已配对设备");
+    }
+
+    #[tokio::test]
+    async fn lan_pull_from_peer_fails_without_paired_peer() {
+        let err = lan_pull_from_peer("missing-device").await.unwrap_err();
+        assert_eq!(err, "未找到已配对设备");
+    }
+
+    #[tokio::test]
+    async fn lan_send_file_to_peer_fails_without_paired_peer() {
+        let err = lan_send_file_to_peer("missing-device", "/tmp/x.txt").await.unwrap_err();
+        assert_eq!(err, "未找到已配对设备");
+    }
+}

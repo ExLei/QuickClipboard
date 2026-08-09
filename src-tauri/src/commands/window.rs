@@ -244,3 +244,136 @@ pub fn get_update_banner_state() -> Option<crate::windows::updater_window::Updat
 pub async fn open_cached_update_window(app: AppHandle) -> Result<bool, String> {
     crate::windows::updater_window::open_cached_update_window(&app).await
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database::ClipboardItem;
+
+    fn sample_clipboard_item() -> ClipboardItem {
+        ClipboardItem {
+            id: 7,
+            uuid: None,
+            favorite_id: None,
+            source_device_id: None,
+            is_remote: false,
+            content: "hello".to_string(),
+            html_content: None,
+            content_type: "text".to_string(),
+            image_id: None,
+            item_order: 0,
+            is_pinned: false,
+            paste_count: 0,
+            source_app: None,
+            source_icon_hash: None,
+            char_count: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn clipboard_updated_payload_serializes_snake_case_and_skips_none() {
+        let payload = ClipboardUpdatedEventPayload {
+            kind: "insert".to_string(),
+            item: Some(sample_clipboard_item()),
+            insert_index: None,
+            total_count: Some(3),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let obj = json.as_object().unwrap();
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["item", "kind", "total_count"]);
+        assert_eq!(json["kind"], "insert");
+        assert_eq!(json["total_count"], 3);
+        assert_eq!(json["item"]["content"], "hello");
+        assert_eq!(json["item"]["id"], 7);
+    }
+
+    #[test]
+    fn clipboard_updated_payload_includes_insert_index_when_some() {
+        let payload = ClipboardUpdatedEventPayload {
+            kind: "insert".to_string(),
+            item: None,
+            insert_index: Some(2),
+            total_count: Some(9),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let obj = json.as_object().unwrap();
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["insert_index", "kind", "total_count"]);
+        assert_eq!(json["insert_index"], 2);
+        assert_eq!(json["total_count"], 9);
+    }
+
+    #[test]
+    fn favorite_updated_payload_serializes_snake_case_and_skips_none() {
+        let payload = FavoriteUpdatedEventPayload {
+            kind: "updated".to_string(),
+            item: None,
+            insert_index: None,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let obj = json.as_object().unwrap();
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["kind"]);
+        assert_eq!(json["kind"], "updated");
+
+        let with_values = FavoriteUpdatedEventPayload {
+            kind: "insert".to_string(),
+            item: Some(crate::services::database::FavoriteItem {
+                id: "f1".to_string(),
+                title: "t".to_string(),
+                content: "c".to_string(),
+                html_content: None,
+                content_type: "text".to_string(),
+                image_id: None,
+                group_name: String::new(),
+                item_order: 0,
+                paste_count: 0,
+                char_count: None,
+                created_at: 0,
+                updated_at: 0,
+            }),
+            insert_index: Some(0),
+        };
+        let json2 = serde_json::to_value(&with_values).unwrap();
+        assert_eq!(json2["insert_index"], 0);
+        assert_eq!(json2["item"]["id"], "f1");
+    }
+
+    #[test]
+    fn main_window_refresh_payload_serializes_all_flags() {
+        let payload = MainWindowRefreshNeededPayload {
+            clipboard: true,
+            favorites: false,
+            groups: true,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let obj = json.as_object().unwrap();
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["clipboard", "favorites", "groups"]);
+        assert_eq!(json["clipboard"], true);
+        assert_eq!(json["favorites"], false);
+        assert_eq!(json["groups"], true);
+    }
+
+    #[test]
+    fn event_payloads_roundtrip_through_json() {
+        let payload = ClipboardUpdatedEventPayload {
+            kind: "insert".to_string(),
+            item: Some(sample_clipboard_item()),
+            insert_index: Some(1),
+            total_count: Some(5),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let back: ClipboardUpdatedEventPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.kind, "insert");
+        assert_eq!(back.insert_index, Some(1));
+        assert_eq!(back.total_count, Some(5));
+        assert_eq!(back.item.unwrap().content, "hello");
+    }
+}

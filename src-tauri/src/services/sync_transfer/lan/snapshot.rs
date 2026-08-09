@@ -85,3 +85,75 @@ pub fn list_tombstones_since(since_deleted_at: Option<i64>) -> Result<LanTombsto
         tombstones: crate::services::database::list_sync_tombstones_since(since_deleted_at)?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_group() -> CloudGroup {
+        CloudGroup {
+            name: "work".to_string(),
+            icon: "ti ti-briefcase".to_string(),
+            color: "#3b82f6".to_string(),
+            order: 1,
+            source_device_id: "dev-a".to_string(),
+            created_at: 100,
+            updated_at: 200,
+        }
+    }
+
+    #[test]
+    fn snapshot_json_round_trip_preserves_all_fields() {
+        let snapshot = LanSyncSnapshot {
+            device_id: "dev-a".to_string(),
+            history_states: [("u1".to_string(), 100)].into_iter().collect(),
+            favorite_states: [("f1".to_string(), 200)].into_iter().collect(),
+            groups: vec![sample_group()],
+            tombstone_states: [("t1".to_string(), 300)].into_iter().collect(),
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let back: LanSyncSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.device_id, "dev-a");
+        assert_eq!(back.history_states.get("u1"), Some(&100));
+        assert_eq!(back.favorite_states.get("f1"), Some(&200));
+        assert_eq!(back.groups.len(), 1);
+        assert_eq!(back.groups[0].name, "work");
+        assert_eq!(back.groups[0].color, "#3b82f6");
+        assert_eq!(back.tombstone_states.get("t1"), Some(&300));
+    }
+
+    #[test]
+    fn snapshot_deserializes_without_tombstone_states() {
+        // 旧版本客户端不发送 tombstone_states → serde(default) 应为空 map
+        let json = r#"{"device_id":"dev-a","history_states":{},"favorite_states":{},"groups":[]}"#;
+        let snapshot: LanSyncSnapshot = serde_json::from_str(json).unwrap();
+        assert!(snapshot.tombstone_states.is_empty());
+    }
+
+    #[test]
+    fn record_batch_contract_collection_and_records() {
+        let batch = LanRecordBatch {
+            collection: "history".to_string(),
+            records: vec![],
+        };
+        let json = serde_json::to_string(&batch).unwrap();
+        let back: LanRecordBatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.collection, "history");
+        assert!(back.records.is_empty());
+    }
+
+    #[test]
+    fn group_batch_and_tombstone_batch_round_trip() {
+        let groups = LanGroupBatch {
+            groups: vec![sample_group()],
+        };
+        let back: LanGroupBatch = serde_json::from_str(&serde_json::to_string(&groups).unwrap()).unwrap();
+        assert_eq!(back.groups[0].order, 1);
+        assert_eq!(back.groups[0].source_device_id, "dev-a");
+
+        let tombstones = LanTombstoneBatch { tombstones: vec![] };
+        let back: LanTombstoneBatch =
+            serde_json::from_str(&serde_json::to_string(&tombstones).unwrap()).unwrap();
+        assert!(back.tombstones.is_empty());
+    }
+}

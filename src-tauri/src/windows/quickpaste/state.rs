@@ -17,3 +17,19 @@ pub fn is_visible() -> bool {
 pub fn set_visible(visible: bool) {
     QUICKPASTE_VISIBLE.store(visible, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quickpaste_visibility_round_trip() {
+        init_quickpaste_state();
+        assert!(!is_visible(), "初始化后不可见");
+        set_visible(true);
+        assert!(is_visible());
+        set_visible(false);
+        assert!(!is_visible());
+    }
+}
+

@@ -507,20 +507,21 @@ fn resolve_panel_theme() -> ThemeColors {
     }
 }
 
-fn resolve_panel_theme_kind() -> PanelThemeKind {
-    let settings = crate::get_settings();
-    let theme = settings.theme.trim();
+/// 纯决策函数：主题字符串 + 深色样式 + 系统深色标志 → 面板主题种类。
+/// 不触碰任何全局状态，便于测试注入 system_dark 双侧。
+fn resolve_theme_kind_from(theme: &str, dark_theme_style: &str, system_dark: bool) -> PanelThemeKind {
+    let theme = theme.trim();
 
     if theme == "dark" {
-        return if settings.dark_theme_style == "modern" {
+        return if dark_theme_style == "modern" {
             PanelThemeKind::DarkModern
         } else {
             PanelThemeKind::DarkClassic
         };
     }
 
-    if theme == "auto" && is_system_dark_mode() {
-        return if settings.dark_theme_style == "modern" {
+    if theme == "auto" && system_dark {
+        return if dark_theme_style == "modern" {
             PanelThemeKind::DarkModern
         } else {
             PanelThemeKind::DarkClassic
@@ -528,6 +529,11 @@ fn resolve_panel_theme_kind() -> PanelThemeKind {
     }
 
     PanelThemeKind::Light
+}
+
+fn resolve_panel_theme_kind() -> PanelThemeKind {
+    let settings = crate::get_settings();
+    resolve_theme_kind_from(&settings.theme, &settings.dark_theme_style, is_system_dark_mode())
 }
 
 fn blend_rgba(base: (u8, u8, u8), overlay: (u8, u8, u8, u8)) -> (u8, u8, u8) {
@@ -561,4 +567,402 @@ fn is_system_dark_mode() -> bool {
 #[cfg(not(target_os = "windows"))]
 fn is_system_dark_mode() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database::connection::test_support::{
+        ensure_isolated_settings_env, SettingsGuard, TestDb, TEST_ENV_LOCK,
+    };
+    use crate::services::database::ClipboardItem;
+    use crate::services::update_settings;
+
+    fn make_item(content_type: &str, content: &str) -> ClipboardItem {
+        ClipboardItem {
+            id: 1,
+            uuid: None,
+            favorite_id: None,
+            source_device_id: None,
+            is_remote: false,
+            content: content.to_string(),
+            html_content: None,
+            content_type: content_type.to_string(),
+            image_id: None,
+            item_order: 0,
+            is_pinned: false,
+            paste_count: 0,
+            source_app: None,
+            source_icon_hash: None,
+            char_count: None,
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    fn seed_clipboard(db: &TestDb, count: i64) {
+        for i in 0..count {
+            db.exec(
+                "INSERT INTO clipboard (content, content_type, item_order, created_at, updated_at) VALUES (?1, 'text', ?2, 1, 1)",
+                &[&format!("item-{}", i), &(i + 1)],
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_text_collapses_whitespace_runs_and_trims() {
+        assert_eq!(normalize_text("a  b\t\n c"), "a b c");
+        assert_eq!(normalize_text("  hello   world  "), "hello world");
+        assert_eq!(normalize_text("\t\n "), "");
+        // U+00A0 (NBSP) 属于 Unicode White_Space，同样会被折叠为单个空格
+        assert_eq!(normalize_text("a\u{00A0}b"), "a b");
+        assert_eq!(normalize_text("a\u{00A0}\u{00A0}b"), "a b");
+    }
+
+    #[test]
+    fn summarize_text_returns_placeholder_for_empty_and_normalizes() {
+        assert_eq!(summarize_text(""), "(空内容)");
+        assert_eq!(summarize_text("   \n "), "(空内容)");
+        assert_eq!(summarize_text("  a   b "), "a b");
+    }
+
+    #[test]
+    fn summarize_text_truncates_at_120_chars_with_ellipsis() {
+        // 契约值：MAX_PREVIEW_CHARS = 120（用字面量固定，防止常量被改动后测试自洽）
+        let exactly_120 = "a".repeat(120);
+        assert_eq!(summarize_text(&exactly_120), exactly_120, "正好 120 字符不加省略号");
+
+        let over_120 = "a".repeat(121);
+        let expected = format!("{}…", "a".repeat(120));
+        assert_eq!(summarize_text(&over_120), expected, "超过 120 字符截断并追加省略号");
+        assert_eq!(expected.chars().count(), 121);
+
+        // 按字符（而非字节）计数：多字节字符同样在 120 字符处截断
+        let chinese = "中".repeat(121);
+        let expected_cn = format!("{}…", "中".repeat(120));
+        assert_eq!(summarize_text(&chinese), expected_cn);
+    }
+
+    #[test]
+    fn parse_files_content_extracts_names_from_files_json() {
+        let content = "files:{\"files\":[{\"name\":\"a.png\"},{\"name\":\"b.jpg\"}]}";
+        assert_eq!(
+            parse_files_content(content),
+            Some(vec!["a.png".to_string(), "b.jpg".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_files_content_rejects_invalid_or_missing_files_json() {
+        assert_eq!(parse_files_content("files:not-json"), None, "非法 JSON → None");
+        assert_eq!(parse_files_content("files:{\"files\":[]}"), None, "空数组 → None");
+        assert_eq!(
+            parse_files_content("files:{\"foo\":[{\"name\":\"a\"}]}"),
+            None,
+            "缺少 files 字段 → None"
+        );
+        assert_eq!(
+            parse_files_content("files:{\"files\":[{\"path\":\"a\"}]}"),
+            None,
+            "条目缺 name 字段 → 全部过滤 → None"
+        );
+        assert_eq!(
+            parse_files_content("text:{\"files\":[{\"name\":\"a\"}]}"),
+            None,
+            "不以 files: 开头 → None"
+        );
+        assert_eq!(parse_files_content("files:"), None, "空 JSON 尾部 → None");
+    }
+
+    #[test]
+    fn summarize_named_items_formats_counts_and_units() {
+        assert_eq!(summarize_named_items(&[], "个文件"), "(空个文件)");
+        assert_eq!(
+            summarize_named_items(&["only.txt".to_string()], "个文件"),
+            "only.txt"
+        );
+        assert_eq!(
+            summarize_named_items(&["a.png".to_string(), "b.jpg".to_string()], "张图片"),
+            "a.png · b.jpg"
+        );
+        // 既有行为（quirk）：3 项以上时固定格式为“等 {n} 个{unit}”，
+        // unit 直接拼在硬编码的“个”之后：unit="个文件" → “个个文件”，
+        // unit="张图片" → “个张图片”。
+        assert_eq!(
+            summarize_named_items(
+                &["a.txt".to_string(), "b.txt".to_string(), "c.txt".to_string()],
+                "个文件"
+            ),
+            "a.txt · b.txt 等 3 个个文件"
+        );
+        assert_eq!(
+            summarize_named_items(
+                &["a.png".to_string(), "b.png".to_string(), "c.png".to_string()],
+                "张图片"
+            ),
+            "a.png · b.png 等 3 个张图片"
+        );
+    }
+
+    #[test]
+    fn format_item_label_dispatches_by_content_type() {
+        assert_eq!(format_item_label(&make_item("text", "  hi   there ")), "hi there");
+        assert_eq!(format_item_label(&make_item("link", "  hi   there ")), "hi there");
+        assert_eq!(format_item_label(&make_item("rich_text", "  hi   there ")), "hi there");
+        assert_eq!(format_item_label(&make_item("unknown_type", "  hi   there ")), "hi there");
+    }
+
+    #[test]
+    fn format_item_label_summarizes_long_text_with_ellipsis() {
+        let content = "a".repeat(125);
+        let expected = format!("{}…", "a".repeat(120));
+        assert_eq!(format_item_label(&make_item("text", &content)), expected);
+    }
+
+    #[test]
+    fn format_item_label_handles_image_content() {
+        let with_files = make_item(
+            "image",
+            "files:{\"files\":[{\"name\":\"a.png\"},{\"name\":\"b.jpg\"}]}",
+        );
+        assert_eq!(format_item_label(&with_files), "a.png · b.jpg");
+
+        let plain = make_item("image", "some-raw-bytes");
+        assert_eq!(format_item_label(&plain), "图片");
+    }
+
+    #[test]
+    fn format_item_label_handles_file_content() {
+        let with_files = make_item(
+            "file",
+            "files:{\"files\":[{\"name\":\"a.txt\"},{\"name\":\"b.txt\"},{\"name\":\"c.txt\"}]}",
+        );
+        assert_eq!(format_item_label(&with_files), "a.txt · b.txt 等 3 个个文件");
+
+        assert_eq!(
+            format_item_label(&make_item("file", "C:\\Users\\me\\report.pdf")),
+            "report.pdf",
+            "Windows 路径取最后一段"
+        );
+        assert_eq!(
+            format_item_label(&make_item("file", "/tmp/dir/doc.txt")),
+            "doc.txt",
+            "POSIX 路径取最后一段"
+        );
+    }
+
+    #[test]
+    fn item_kind_label_maps_exact_content_types() {
+        assert_eq!(item_kind_label("text"), "文本");
+        assert_eq!(item_kind_label("link"), "链接");
+        assert_eq!(item_kind_label("rich_text"), "富文");
+        assert_eq!(item_kind_label("image"), "图片");
+        assert_eq!(item_kind_label("file"), "文件");
+        assert_eq!(item_kind_label("anything-else"), "其他");
+        assert_eq!(item_kind_label(""), "其他");
+    }
+
+    #[test]
+    fn build_page_items_computes_exact_labels_and_ranges() {
+        // PageItem 未实现 PartialEq，按 (page_index, label) 逐项断言
+        // 空数据：单页且范围 0-0
+        let items: Vec<(i64, String)> = build_page_items(1, 0)
+            .into_iter()
+            .map(|item| (item.page_index, item.label))
+            .collect();
+        assert_eq!(items, vec![(0, "第 1 页 · 0-0 条".to_string())]);
+
+        // total_pages 至少为 1
+        let items: Vec<(i64, String)> = build_page_items(0, 0)
+            .into_iter()
+            .map(|item| (item.page_index, item.label))
+            .collect();
+        assert_eq!(items, vec![(0, "第 1 页 · 0-0 条".to_string())]);
+
+        let items: Vec<(i64, String)> = build_page_items(2, 26)
+            .into_iter()
+            .map(|item| (item.page_index, item.label))
+            .collect();
+        assert_eq!(
+            items,
+            vec![
+                (0, "第 1 页 · 1-25 条".to_string()),
+                (1, "第 2 页 · 26-26 条".to_string()),
+            ]
+        );
+
+        let items: Vec<(i64, String)> = build_page_items(3, 75)
+            .into_iter()
+            .map(|item| (item.page_index, item.label))
+            .collect();
+        assert_eq!(
+            items,
+            vec![
+                (0, "第 1 页 · 1-25 条".to_string()),
+                (1, "第 2 页 · 26-50 条".to_string()),
+                (2, "第 3 页 · 51-75 条".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn blend_rgba_blends_exact_channels() {
+        assert_eq!(
+            blend_rgba((243, 244, 246), (59, 130, 246, 0)),
+            (243, 244, 246),
+            "alpha=0 时完全保留底色"
+        );
+        assert_eq!(
+            blend_rgba((243, 244, 246), (59, 130, 246, 255)),
+            (59, 130, 246),
+            "alpha=255 时完全覆盖为叠色"
+        );
+        // Light 主题 hover_bg: blend((243,244,246), (59,130,246,31))
+        assert_eq!(blend_rgba((243, 244, 246), (59, 130, 246, 31)), (221, 230, 246));
+        // Light 主题 border: blend((243,244,246), (17,24,39,56))
+        assert_eq!(blend_rgba((243, 244, 246), (17, 24, 39, 56)), (193, 196, 201));
+        // 50% 半透明黑覆盖白 → 128
+        assert_eq!(blend_rgba((0, 0, 0), (255, 255, 255, 128)), (128, 128, 128));
+    }
+
+    #[test]
+    fn load_page_empty_database_yields_placeholder_page() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let page = load_page(0).expect("空库加载第 0 页应成功");
+        assert_eq!(page.total_count, 0);
+        assert_eq!(page.total_pages, 1);
+        assert_eq!(page.current_page, 0);
+        assert_eq!(page.range_start, 0);
+        assert_eq!(page.range_end, 0);
+        assert_eq!(page.items.len(), 1, "空库应展示占位项");
+        assert_eq!(page.items[0].id, 0);
+        assert_eq!(page.items[0].label, "(暂无记录)");
+        assert_eq!(page.items[0].kind_label, "");
+    }
+
+    #[test]
+    fn load_page_single_full_page_ranges() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        seed_clipboard(&db, 25);
+        let page = load_page(0).expect("加载第 0 页应成功");
+        assert_eq!(page.total_count, 25);
+        assert_eq!(page.total_pages, 1);
+        assert_eq!(page.current_page, 0);
+        assert_eq!(page.range_start, 1);
+        assert_eq!(page.range_end, 25);
+        assert_eq!(page.items.len(), 25);
+    }
+
+    #[test]
+    fn load_page_multi_page_ranges_and_clamping() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        seed_clipboard(&db, 26);
+
+        let page0 = load_page(0).expect("第 0 页");
+        assert_eq!(page0.total_count, 26);
+        assert_eq!(page0.total_pages, 2);
+        assert_eq!(page0.current_page, 0);
+        assert_eq!(page0.range_start, 1);
+        assert_eq!(page0.range_end, 25);
+        assert_eq!(page0.items.len(), 25);
+
+        let page1 = load_page(1).expect("第 1 页");
+        assert_eq!(page1.current_page, 1);
+        assert_eq!(page1.range_start, 26);
+        assert_eq!(page1.range_end, 26);
+        assert_eq!(page1.items.len(), 1);
+
+        // 负页码钳制到第 0 页
+        let clamped_neg = load_page(-3).expect("负页码");
+        assert_eq!(clamped_neg.current_page, 0);
+        assert_eq!(clamped_neg.range_start, 1);
+        assert_eq!(clamped_neg.range_end, 25);
+        assert_eq!(clamped_neg.items.len(), 25);
+
+        // 超界页码钳制到最后一页；偏移超出数据范围时展示占位项
+        let clamped_high = load_page(99).expect("超界页码");
+        assert_eq!(clamped_high.current_page, 1);
+        assert_eq!(clamped_high.range_start, 26);
+        assert_eq!(clamped_high.range_end, 26);
+        assert_eq!(clamped_high.items.len(), 1);
+        assert_eq!(clamped_high.items[0].id, 0);
+        assert_eq!(clamped_high.items[0].label, "(暂无记录)");
+    }
+
+    #[test]
+    fn theme_resolution_dark_theme_follows_dark_style() {
+        let _guard = TEST_ENV_LOCK.lock();
+        ensure_isolated_settings_env();
+        let _restore = SettingsGuard(crate::services::get_settings());
+
+        let mut settings = crate::services::get_settings();
+        settings.theme = "dark".to_string();
+        settings.dark_theme_style = "modern".to_string();
+        update_settings(settings).expect("更新设置");
+        assert_eq!(resolve_panel_theme_kind(), PanelThemeKind::DarkModern);
+
+        let mut settings = crate::services::get_settings();
+        settings.theme = "dark".to_string();
+        settings.dark_theme_style = "classic".to_string();
+        update_settings(settings).expect("更新设置");
+        assert_eq!(resolve_panel_theme_kind(), PanelThemeKind::DarkClassic);
+
+        // theme 值两侧空白会被 trim
+        let mut settings = crate::services::get_settings();
+        settings.theme = " dark ".to_string();
+        settings.dark_theme_style = "modern".to_string();
+        update_settings(settings).expect("更新设置");
+        assert_eq!(resolve_panel_theme_kind(), PanelThemeKind::DarkModern);
+    }
+
+    #[test]
+    fn theme_resolution_light_and_auto_follow_system_dark_mode() {
+        let _guard = TEST_ENV_LOCK.lock();
+        ensure_isolated_settings_env();
+        let _restore = SettingsGuard(crate::services::get_settings());
+
+        let mut settings = crate::services::get_settings();
+        settings.theme = "light".to_string();
+        update_settings(settings).expect("更新设置");
+        assert_eq!(resolve_panel_theme_kind(), PanelThemeKind::Light);
+
+        // auto 双侧注入：纯决策函数不依赖平台实时 is_system_dark_mode()
+        assert_eq!(
+            resolve_theme_kind_from("auto", "modern", true),
+            PanelThemeKind::DarkModern,
+            "auto + 系统深色 → dark 样式"
+        );
+        assert_eq!(
+            resolve_theme_kind_from("auto", "classic", true),
+            PanelThemeKind::DarkClassic
+        );
+        assert_eq!(
+            resolve_theme_kind_from("auto", "modern", false),
+            PanelThemeKind::Light,
+            "auto + 系统浅色 → Light"
+        );
+        // light 不受系统深色影响；dark 不看系统深色标志；两侧空白 trim
+        assert_eq!(
+            resolve_theme_kind_from("light", "modern", true),
+            PanelThemeKind::Light
+        );
+        assert_eq!(
+            resolve_theme_kind_from("dark", "classic", false),
+            PanelThemeKind::DarkClassic
+        );
+        assert_eq!(
+            resolve_theme_kind_from(" auto ", "modern", true),
+            PanelThemeKind::DarkModern,
+            "theme 两侧空白被 trim"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn system_dark_mode_is_false_on_non_windows() {
+        assert!(!is_system_dark_mode());
+    }
 }

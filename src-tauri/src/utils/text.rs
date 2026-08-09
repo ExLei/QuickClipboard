@@ -169,4 +169,124 @@ mod tests {
         assert!(excerpt.len() <= 257);
         assert!(excerpt.contains("关键字"));
     }
+
+    #[test]
+    fn content_type_detection_is_exact_and_case_sensitive() {
+        assert!(is_textual_content_type("text"));
+        assert!(is_textual_content_type("rich_text"));
+        assert!(is_textual_content_type("link"));
+        assert!(is_textual_content_type("link, rich_text"));
+        assert!(is_textual_content_type(" text , image "));
+        assert!(!is_textual_content_type("image"));
+        assert!(!is_textual_content_type("image,file"));
+        assert!(!is_textual_content_type("Text")); // 大小写敏感
+        assert!(!is_textual_content_type(""));
+        assert!(!is_textual_content_type("text;")); // 必须精确匹配 kind
+        assert!(!is_textual_content_type("texts"));
+    }
+
+    #[test]
+    fn truncate_string_passes_through_short_and_empty_inputs() {
+        assert_eq!(truncate_string(String::new(), 100), "");
+        assert_eq!(truncate_string("abc".to_string(), 3), "abc");
+        assert_eq!(truncate_string("abc".to_string(), 5), "abc");
+        assert_eq!(truncate_string("A".repeat(100), 100), "A".repeat(100));
+    }
+
+    #[test]
+    fn truncate_string_appends_ellipsis_suffix_when_over_max_len() {
+        // max_len=100 → 截断点 = 100 - 50 = 50
+        assert_eq!(
+            truncate_string("A".repeat(101), 100),
+            format!("{}...(内容过长已截断)", "A".repeat(50))
+        );
+        // max_len=51 → 截断点 = 1
+        assert_eq!(truncate_string("A".repeat(60), 51), "A...(内容过长已截断)");
+    }
+
+    #[test]
+    fn truncate_string_returns_message_only_when_max_len_is_50_or_below() {
+        assert_eq!(truncate_string("A".repeat(60), 50), "...(内容过长已截断)");
+        assert_eq!(truncate_string("A".repeat(60), 49), "...(内容过长已截断)");
+        assert_eq!(truncate_string("A".repeat(60), 0), "...(内容过长已截断)");
+    }
+
+    #[test]
+    fn truncate_string_never_splits_multibyte_chars() {
+        // "甲" 占 3 字节；截断点 50 → 回退到 48（16 个字符）
+        assert_eq!(
+            truncate_string("甲".repeat(40), 100),
+            format!("{}...(内容过长已截断)", "甲".repeat(16))
+        );
+        // max_len=51 → 截断点 1 不是字符边界 → 仅消息
+        assert_eq!(truncate_string("甲".repeat(20), 51), "...(内容过长已截断)");
+    }
+
+    #[test]
+    fn keyword_excerpt_exact_case_and_format() {
+        // s = A*10 + KEY + B*30 (43 字节), max_len=25
+        let s = format!("{}KEY{}", "A".repeat(10), "B".repeat(30));
+        assert_eq!(
+            truncate_around_keyword(s, "KEY", 25),
+            format!("{}KEY{}...", "A".repeat(10), "B".repeat(9))
+        );
+    }
+
+    #[test]
+    fn keyword_excerpt_matches_case_insensitively_with_context() {
+        // s = A*20 + needle + B*30 (56 字节), max_len=40 → 前文保留 16 字符
+        let s = format!("{}needle{}", "A".repeat(20), "B".repeat(30));
+        assert_eq!(
+            truncate_around_keyword(s, "NEEDLE", 40),
+            format!("...{}needle{}...", "A".repeat(16), "B".repeat(12))
+        );
+    }
+
+    #[test]
+    fn keyword_excerpt_preserves_utf8_and_keeps_keyword_in_slice() {
+        // 甲*30 + 关键词 + 乙*30 (189 字节), max_len=100
+        let s = format!("{}关键词{}", "甲".repeat(30), "乙".repeat(30));
+        assert_eq!(
+            truncate_around_keyword(s, "关键词", 100),
+            format!("...{}关键词{}...", "甲".repeat(16), "乙".repeat(12))
+        );
+    }
+
+    #[test]
+    fn keyword_excerpt_falls_back_to_truncate_string_when_keyword_missing() {
+        assert_eq!(
+            truncate_around_keyword("A".repeat(100), "xyz", 40),
+            "...(内容过长已截断)"
+        );
+    }
+
+    #[test]
+    fn keyword_excerpt_edge_inputs() {
+        assert_eq!(truncate_around_keyword(String::new(), "k", 10), "");
+        // 空 keyword → truncate_string 兜底
+        assert_eq!(
+            truncate_around_keyword("A".repeat(120), "", 100),
+            format!("{}...(内容过长已截断)", "A".repeat(50))
+        );
+        // 短文本原样返回（即使没有 keyword）
+        assert_eq!(
+            truncate_around_keyword("abcdef".to_string(), "zzz", 100),
+            "abcdef"
+        );
+    }
+
+    #[test]
+    fn keyword_excerpt_boundary_when_keyword_barely_fits() {
+        // "KEYWORD" = 7 字节；slice_len = max_len - 6
+        let s = format!("{}KEYWORD{}", "A".repeat(40), "B".repeat(40));
+        // max_len=14：end=48 > keyword_end=47 → 吸收 1 个后续字符（结果 15 字节 > max_len，如实记录）
+        assert_eq!(truncate_around_keyword(s.clone(), "KEYWORD", 14), "...KEYWORDB...");
+        // max_len=13：end 恰好 == keyword_end → 恰好放下
+        assert_eq!(truncate_around_keyword(s.clone(), "KEYWORD", 13), "...KEYWORD...");
+        // max_len=12：end=46 < keyword_end=47 → truncate_string 兜底
+        assert_eq!(
+            truncate_around_keyword(s, "KEYWORD", 12),
+            "...(内容过长已截断)"
+        );
+    }
 }

@@ -428,7 +428,7 @@ pub fn get_all_screens() -> Result<Vec<(i32, i32, i32, i32, f64)>, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn get_monitor_refresh_rate(_monitor: &xcap::Monitor) -> Option<u32> {
+pub fn get_monitor_refresh_rate<T>(_monitor: &T) -> Option<u32> {
     None
 }
 
@@ -510,5 +510,85 @@ mod tests {
         let resolved = resolve_visible_window_rect(window, &work_areas, MIN_VISIBLE_RESTORE_MARGIN);
 
         assert_eq!(resolved, Some(rect(3480, 120, 360, 520)));
+    }
+
+    #[test]
+    fn overlap_extent_is_exact() {
+        let a = rect(0, 0, 100, 100);
+        assert_eq!(overlap_extent(a, rect(50, 50, 100, 100)), (50, 50));
+        assert_eq!(overlap_extent(a, rect(10, 10, 5, 5)), (5, 5)); // 包含
+        assert_eq!(overlap_extent(a, rect(200, 200, 10, 10)), (0, 0)); // 不相交
+        assert_eq!(overlap_extent(a, a), (100, 100));
+    }
+
+    #[test]
+    fn visible_margin_boundary_accepts_exact_margin_and_rejects_one_less() {
+        let area = rect(0, 0, 1920, 1080);
+        // 恰有 64px 重叠 → 可见
+        assert!(has_min_visible_overlap(rect(-296, 100, 360, 520), &[area], 64));
+        // 63px 重叠 → 不可见
+        assert!(!has_min_visible_overlap(rect(-297, 100, 360, 520), &[area], 64));
+    }
+
+    #[test]
+    fn windows_smaller_than_margin_require_full_visibility() {
+        let area = rect(0, 0, 1920, 1080);
+        // 30x30 窗口：必需重叠 = min(30, 64) = 30
+        assert!(!has_min_visible_overlap(rect(-1, 0, 30, 30), &[area], 64)); // 29px
+        assert!(has_min_visible_overlap(rect(0, 0, 30, 30), &[area], 64)); // 30px
+    }
+
+    #[test]
+    fn clamp_axis_clamps_into_area_and_pins_large_or_degenerate_areas() {
+        assert_eq!(clamp_axis(150, 100, 0, 1920), 150);
+        assert_eq!(clamp_axis(-50, 100, 0, 1920), 0);
+        assert_eq!(clamp_axis(1900, 100, 0, 1920), 1820);
+        // 窗口宽于区域 → 区域原点
+        assert_eq!(clamp_axis(100, 2000, 0, 1920), 0);
+        // 退化区域 → 区域原点
+        assert_eq!(clamp_axis(100, 100, 50, 0), 50);
+    }
+
+    #[test]
+    fn squared_distance_is_exact() {
+        assert_eq!(squared_distance((3, 4), (0, 0)), 25);
+        assert_eq!(squared_distance((0, 0), (3, -4)), 25);
+        assert_eq!(squared_distance((100, 100), (100, 100)), 0);
+    }
+
+    #[test]
+    fn clamp_to_nearest_work_area_picks_minimum_squared_distance() {
+        let areas = vec![rect(0, 0, 1920, 1080), rect(1920, 0, 1920, 1080)];
+        // 已在第二个显示器内 → 原样
+        assert_eq!(
+            clamp_to_nearest_work_area(rect(2400, 120, 360, 520), &areas),
+            Some(rect(2400, 120, 360, 520))
+        );
+        // 两个显示器右侧之外 → 收敛到最近的（第二个）显示器
+        assert_eq!(
+            clamp_to_nearest_work_area(rect(4200, 120, 360, 520), &areas),
+            Some(rect(3480, 120, 360, 520))
+        );
+    }
+
+    #[test]
+    fn y_axis_offscreen_clamps_vertically() {
+        let area = rect(0, 0, 1920, 1080);
+        // 底部仅 20px 可见 < 64 → 吸附到 y=0
+        assert_eq!(
+            resolve_visible_window_rect(rect(100, -500, 360, 520), &[area], 64),
+            Some(rect(100, 0, 360, 520))
+        );
+        // 底部 120px 可见 ≥ 64 → 原样
+        assert_eq!(
+            resolve_visible_window_rect(rect(100, -400, 360, 520), &[area], 64),
+            Some(rect(100, -400, 360, 520))
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn refresh_rate_is_none_on_non_windows() {
+        assert_eq!(get_monitor_refresh_rate(&0u32), None);
     }
 }

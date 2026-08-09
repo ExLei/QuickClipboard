@@ -143,6 +143,7 @@ fn normalize_webdav_root_path(root_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{normalize_webdav_root_path, normalize_webdav_url, webdav_account_key, webdav_encryption_account_key};
+    use super::{get_webdav_password, set_webdav_password, get_webdav_encryption_password};
 
     #[test]
     fn trims_trailing_slashes_for_webdav_credential_key() {
@@ -180,5 +181,54 @@ mod tests {
     fn uses_default_webdav_root_for_encryption_key() {
         assert_eq!(normalize_webdav_root_path(""), "quickclipboard");
         assert_eq!(normalize_webdav_root_path("\\quickclipboard\\"), "quickclipboard");
+    }
+
+    #[test]
+    fn webdav_root_path_normalization_collapses_separators_and_trims_parts() {
+        assert_eq!(normalize_webdav_root_path("a//b///c"), "a/b/c");
+        assert_eq!(normalize_webdav_root_path("\\a\\b\\"), "a/b");
+        assert_eq!(normalize_webdav_root_path("  quickclipboard  /"), "quickclipboard");
+        assert_eq!(normalize_webdav_root_path("///"), "quickclipboard");
+        assert_eq!(normalize_webdav_root_path("quickclipboard/"), "quickclipboard");
+    }
+
+    #[test]
+    fn webdav_account_key_is_exact_sha256_v1_format() {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"https://example.com/dav\nuser");
+        let expected = format!("v1:{}", hex::encode(hasher.finalize()));
+        assert_eq!(
+            webdav_account_key("https://example.com/dav", "user"),
+            expected
+        );
+    }
+
+    #[test]
+    fn webdav_encryption_account_key_is_exact_sha256_v1_format() {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"https://example.com/dav\nuser\nquickclipboard");
+        let expected = format!("v1:{}", hex::encode(hasher.finalize()));
+        assert_eq!(
+            webdav_encryption_account_key("https://example.com/dav", "user", "quickclipboard"),
+            expected
+        );
+    }
+
+    #[test]
+    fn credential_access_validates_empty_url_and_username_before_keyring() {
+        let err = get_webdav_password("", "user").unwrap_err();
+        assert!(err.contains("请先填写 WebDAV 地址"), "got: {err}");
+
+        let err = set_webdav_password("https://example.com/dav", "   ", "pw").unwrap_err();
+        assert!(err.contains("请先填写 WebDAV 用户名"), "got: {err}");
+
+        let err = get_webdav_encryption_password("", "user", "root").unwrap_err();
+        assert!(err.contains("请先填写 WebDAV 地址"), "got: {err}");
+
+        // 空密码会走删除分支，但仍应先校验地址
+        let err = set_webdav_password("", "user", "").unwrap_err();
+        assert!(err.contains("请先填写 WebDAV 地址"), "got: {err}");
     }
 }

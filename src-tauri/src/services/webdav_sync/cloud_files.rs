@@ -392,6 +392,19 @@ struct PreparedCloudFileUpload {
     progress: Option<CloudFileUploadProgressCallback>,
 }
 
+impl std::fmt::Debug for PreparedCloudFileUpload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedCloudFileUpload")
+            .field("path", &self.path)
+            .field("source", &self.source)
+            .field("name", &self.name)
+            .field("size", &self.size)
+            .field("transfer_id", &self.transfer_id)
+            .field("progress", &"<callback>")
+            .finish()
+    }
+}
+
 fn prepare_upload_request(request: CloudFileUploadRequest) -> Result<PreparedCloudFileUpload, (String, String)> {
     let path = request.path;
     let source = PathBuf::from(&path);
@@ -616,4 +629,254 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     std::io::copy(&mut file, &mut hasher)
         .map_err(|e| format!("计算文件校验值失败: {}", e))?;
     Ok(hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        cloud_file_object_path, download_path_used_by_other, is_webdav_conflict_error, prepare_upload_request,
+        sanitize_file_name, sha256_file, split_file_name, to_list_item, unique_download_path, validate_file_id,
+        CloudFileDownloadIndex, CloudFileDownloadRecord, CloudFileManifest, CloudFileUploadRequest,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TEMP_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qc-webdav-test-{}-{}-{}",
+            std::process::id(),
+            tag,
+            TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn manifest(id: &str, name: &str) -> CloudFileManifest {
+        CloudFileManifest {
+            id: id.to_string(),
+            name: name.to_string(),
+            size: 10,
+            sha256: "abc".to_string(),
+            source_device_id: "dev".to_string(),
+            source_device_name: "dev-name".to_string(),
+            uploaded_at: 1,
+        }
+    }
+
+    #[test]
+    fn validate_file_id_contract() {
+        assert!(validate_file_id("abc123").is_ok());
+        assert!(validate_file_id("a-b_c").is_ok());
+        assert!(validate_file_id("a-b_c-9").is_ok());
+        let err = validate_file_id("").unwrap_err();
+        assert_eq!(err, "云端文件 ID 无效");
+        assert!(validate_file_id("  ").is_err());
+        assert!(validate_file_id("a b").is_err());
+        assert!(validate_file_id("a/b").is_err());
+        assert!(validate_file_id("a.b").is_err());
+        assert!(validate_file_id("中文").is_err());
+    }
+
+    #[test]
+    fn sanitize_file_name_replaces_forbidden_chars() {
+        assert_eq!(sanitize_file_name("a<b>c:d\"e/f\\g|h?i*j"), "a_b_c_d_e_f_g_h_i_j");
+        assert_eq!(sanitize_file_name("report.txt"), "report.txt");
+        assert_eq!(sanitize_file_name("\u{7}tab\u{1}"), "_tab_");
+    }
+
+    #[test]
+    fn sanitize_file_name_trims_edges_and_falls_back() {
+        assert_eq!(sanitize_file_name("  pad  ."), "pad");
+        assert_eq!(sanitize_file_name("..."), "file");
+        assert_eq!(sanitize_file_name(""), "file");
+        assert_eq!(sanitize_file_name("   "), "file");
+    }
+
+    #[test]
+    fn sanitize_file_name_prefixes_reserved_windows_names() {
+        assert_eq!(sanitize_file_name("CON.txt"), "_CON.txt");
+        assert_eq!(sanitize_file_name("con"), "_con");
+        assert_eq!(sanitize_file_name("NUL.bin"), "_NUL.bin");
+        assert_eq!(sanitize_file_name("COM1"), "_COM1");
+        assert_eq!(sanitize_file_name("com9.bin"), "_com9.bin");
+        assert_eq!(sanitize_file_name("LPT1"), "_LPT1");
+        // COM10 不是保留名
+        assert_eq!(sanitize_file_name("COM10"), "COM10");
+    }
+
+    #[test]
+    fn split_file_name_contract() {
+        assert_eq!(split_file_name("report.txt"), ("report".to_string(), Some("txt".to_string())));
+        assert_eq!(split_file_name("a.b.c"), ("a.b".to_string(), Some("c".to_string())));
+        assert_eq!(split_file_name("noext"), ("noext".to_string(), None));
+        assert_eq!(split_file_name(""), ("file".to_string(), None));
+    }
+
+    #[test]
+    fn unique_download_path_avoids_disk_and_index_conflicts() {
+        let dir = temp_dir("unique");
+        std::fs::write(dir.join("report.txt"), b"x").unwrap();
+        let mut index = CloudFileDownloadIndex::default();
+        // 其他文件的记录占用了 report (2).txt
+        index.files.insert(
+            "other-id".to_string(),
+            CloudFileDownloadRecord {
+                path: dir.join("report (2).txt").to_string_lossy().to_string(),
+                downloaded_at: 1,
+                sha256: "x".to_string(),
+            },
+        );
+        let path = unique_download_path(&dir, "report.txt", "my-id", &index);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "report (3).txt");
+    }
+
+    #[test]
+    fn unique_download_path_first_choice_is_plain_name() {
+        let dir = temp_dir("unique2");
+        let index = CloudFileDownloadIndex::default();
+        let path = unique_download_path(&dir, "notes.txt", "my-id", &index);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "notes.txt");
+        // 无扩展名
+        let path = unique_download_path(&dir, "notes", "my-id", &index);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "notes");
+    }
+
+    #[test]
+    fn unique_download_path_handles_extensionless_conflicts() {
+        let dir = temp_dir("unique3");
+        std::fs::write(dir.join("notes"), b"x").unwrap();
+        let index = CloudFileDownloadIndex::default();
+        let path = unique_download_path(&dir, "notes", "my-id", &index);
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "notes (2)");
+    }
+
+    #[test]
+    fn download_path_used_by_other_semantics() {
+        let dir = temp_dir("usedby");
+        let path = dir.join("a.txt").to_string_lossy().to_string();
+        let mut index = CloudFileDownloadIndex::default();
+        index.files.insert(
+            "file-1".to_string(),
+            CloudFileDownloadRecord {
+                path: path.clone(),
+                downloaded_at: 1,
+                sha256: "x".to_string(),
+            },
+        );
+        assert!(download_path_used_by_other("file-2", Path::new(&path), &index));
+        assert!(!download_path_used_by_other("file-1", Path::new(&path), &index));
+        assert!(!download_path_used_by_other("file-2", Path::new("/other"), &index));
+    }
+
+    #[test]
+    fn to_list_item_maps_local_status_by_download_index() {
+        let dir = temp_dir("tolist");
+        let on_disk = dir.join("present.bin");
+        std::fs::write(&on_disk, b"x").unwrap();
+        let mut index = CloudFileDownloadIndex::default();
+        index.files.insert(
+            "id-1".to_string(),
+            CloudFileDownloadRecord {
+                path: on_disk.to_string_lossy().to_string(),
+                downloaded_at: 42,
+                sha256: "x".to_string(),
+            },
+        );
+        index.files.insert(
+            "id-2".to_string(),
+            CloudFileDownloadRecord {
+                path: dir.join("gone.bin").to_string_lossy().to_string(),
+                downloaded_at: 43,
+                sha256: "x".to_string(),
+            },
+        );
+        let item = to_list_item(manifest("id-1", "a.bin"), &index);
+        assert_eq!(item.local_status, "downloaded");
+        assert_eq!(item.downloaded_at, 42);
+        assert!(item.local_path.as_deref().unwrap().ends_with("present.bin"));
+
+        let item = to_list_item(manifest("id-2", "b.bin"), &index);
+        assert_eq!(item.local_status, "missing");
+        assert_eq!(item.downloaded_at, 43);
+        assert!(item.local_path.is_some());
+
+        let item = to_list_item(manifest("id-3", "c.bin"), &index);
+        assert_eq!(item.local_status, "notDownloaded");
+        assert_eq!(item.downloaded_at, 0);
+        assert!(item.local_path.is_none());
+    }
+
+    #[test]
+    fn cloud_file_object_path_layout() {
+        assert_eq!(cloud_file_object_path("abc-123"), "cloud_files/objects/abc-123.qcf");
+    }
+
+    #[test]
+    fn prepare_upload_request_accepts_regular_file() {
+        let dir = temp_dir("prepare");
+        let file = dir.join("photo.png");
+        std::fs::write(&file, vec![0u8; 1024]).unwrap();
+        let request = CloudFileUploadRequest {
+            path: file.to_string_lossy().to_string(),
+            transfer_id: Some("t1".to_string()),
+            progress: None,
+        };
+        let prepared = prepare_upload_request(request).expect("file should be accepted");
+        assert_eq!(prepared.name, "photo.png");
+        assert_eq!(prepared.size, 1024);
+        assert_eq!(prepared.transfer_id.as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn prepare_upload_request_rejects_missing_and_directory() {
+        let dir = temp_dir("prepare2");
+        let err = prepare_upload_request(CloudFileUploadRequest {
+            path: dir.join("nope.bin").to_string_lossy().to_string(),
+            transfer_id: None,
+            progress: None,
+        })
+        .unwrap_err();
+        assert!(err.1.contains("读取待上传文件信息失败"), "got: {}", err.1);
+
+        let err = prepare_upload_request(CloudFileUploadRequest {
+            path: dir.to_string_lossy().to_string(),
+            transfer_id: None,
+            progress: None,
+        })
+        .unwrap_err();
+        assert!(err.1.contains("只能上传普通文件"), "got: {}", err.1);
+
+        // 目录路径带尾斜杠时同样按目录拒绝（metadata 检查先于文件名检查）
+        let err = prepare_upload_request(CloudFileUploadRequest {
+            path: format!("{}/", dir.to_string_lossy()),
+            transfer_id: None,
+            progress: None,
+        })
+        .unwrap_err();
+        assert!(err.1.contains("只能上传普通文件"), "got: {}", err.1);
+        // "文件名无效" 分支要求 metadata 是文件但取不到文件名，普通文件系统上不可达
+    }
+
+    #[test]
+    fn sha256_file_matches_known_vector() {
+        let dir = temp_dir("sha");
+        let file = dir.join("hello.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        assert_eq!(
+            sha256_file(&file).unwrap(),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        let err = sha256_file(&dir.join("missing.txt")).unwrap_err();
+        assert!(err.contains("打开待上传文件失败"), "got: {}", err);
+    }
+
+    #[test]
+    fn is_webdav_conflict_error_classifier() {
+        assert!(is_webdav_conflict_error("写入 WebDAV 文件失败: 目标目录不存在或路径冲突 (409)"));
+        assert!(is_webdav_conflict_error("Conflict"));
+        assert!(!is_webdav_conflict_error("500"));
+    }
 }

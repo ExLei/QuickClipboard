@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager, Emitter, WebviewUrl, WebviewWindowBuilder};
 use super::state::set_visible;
 use crate::utils::positioning::center_at_cursor;
+use crate::utils::WindowDragAndDropExt;
 use crate::services::system::raw_input::{enable_quickpaste_keyboard_mode, disable_quickpaste_keyboard_mode};
 
 fn create_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
@@ -22,7 +23,7 @@ fn create_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
         .focusable(false)
         .maximizable(false)
         .minimizable(false)
-        .drag_and_drop(false)
+        .drag_and_drop_cfg(false)
         .build()
         .map_err(|e| e.to_string())?;
     

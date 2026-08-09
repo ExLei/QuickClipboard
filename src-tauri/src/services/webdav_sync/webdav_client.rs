@@ -15,7 +15,7 @@ use super::types::{SyncCollection, WebdavConfig};
 
 const WEBDAV_NETWORK_ERROR: &str = "无法连接 WebDAV 服务，请检查地址、网络或服务器状态";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WebdavClient {
     client: Client,
     config: WebdavConfig,
@@ -24,7 +24,7 @@ pub struct WebdavClient {
     ensured_dirs: Arc<Mutex<HashSet<String>>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct EncryptionState {
     context: WebdavCryptoContext,
     password: String,
@@ -442,4 +442,172 @@ fn format_webdav_status_error(action: &str, status: StatusCode) -> String {
         _ => "请求被服务器拒绝",
     };
     format!("{}: {} ({})", action, hint, status.as_u16())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        format_webdav_status_error, is_webdav_conflict, map_reqwest_error, normalize_path,
+        should_refresh_encryption_config, WebdavClient, WebdavConfig, WEBDAV_NETWORK_ERROR,
+    };
+    use reqwest::StatusCode;
+
+    fn config(url: &str, root: &str) -> WebdavConfig {
+        WebdavConfig {
+            url: url.to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            root_path: root.to_string(),
+        }
+    }
+
+    #[test]
+    fn new_rejects_empty_url() {
+        let err = WebdavClient::new(config("", "")).unwrap_err();
+        assert_eq!(err, "WebDAV 地址不能为空");
+        let err = WebdavClient::new(config("   ", "")).unwrap_err();
+        assert_eq!(err, "WebDAV 地址不能为空");
+    }
+
+    #[test]
+    fn new_builds_base_url_from_url_and_root() {
+        let client = WebdavClient::new(config("https://dav.example.com/", "quickclipboard")).unwrap();
+        assert_eq!(client.base_url, "https://dav.example.com/quickclipboard");
+        // 无根路径时 base_url 就是 url 本身（去除尾部斜杠）
+        let client = WebdavClient::new(config("https://dav.example.com///", "")).unwrap();
+        assert_eq!(client.base_url, "https://dav.example.com");
+        // 根路径会经过路径归一化
+        let client = WebdavClient::new(config("https://dav.example.com/", "/quick//clipboard/")).unwrap();
+        assert_eq!(client.base_url, "https://dav.example.com/quick/clipboard");
+    }
+
+    #[test]
+    fn url_for_joins_base_and_normalized_path() {
+        let client = WebdavClient::new(config("https://dav.example.com", "quickclipboard")).unwrap();
+        assert_eq!(client.url_for(""), "https://dav.example.com/quickclipboard");
+        assert_eq!(client.url_for("history/index.json"), "https://dav.example.com/quickclipboard/history/index.json");
+        assert_eq!(client.url_for("/history//index.json"), "https://dav.example.com/quickclipboard/history/index.json");
+        assert_eq!(client.url_for("history\\index.json"), "https://dav.example.com/quickclipboard/history/index.json");
+    }
+
+    #[test]
+    fn normalize_path_contract() {
+        assert_eq!(normalize_path(""), "");
+        assert_eq!(normalize_path("/"), "");
+        assert_eq!(normalize_path("a//b"), "a/b");
+        assert_eq!(normalize_path("/a/b/"), "a/b");
+        assert_eq!(normalize_path("a\\b\\c"), "a/b/c");
+        assert_eq!(normalize_path(" / " ), "");
+        assert_eq!(normalize_path(" a / b "), " a / b ");
+    }
+
+    #[test]
+    fn status_error_mapping_is_exact() {
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::UNAUTHORIZED),
+            "读取 WebDAV 文件失败: 账号或密码不正确 (401)"
+        );
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::FORBIDDEN),
+            "读取 WebDAV 文件失败: 当前账号没有访问权限 (403)"
+        );
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::NOT_FOUND),
+            "读取 WebDAV 文件失败: 路径不存在 (404)"
+        );
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::CONFLICT),
+            "读取 WebDAV 文件失败: 目标目录不存在或路径冲突 (409)"
+        );
+        assert_eq!(
+            format_webdav_status_error("写入 WebDAV 文件失败", StatusCode::from_u16(507).unwrap()),
+            "写入 WebDAV 文件失败: 存储空间不足 (507)"
+        );
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::INTERNAL_SERVER_ERROR),
+            "读取 WebDAV 文件失败: 服务器返回异常 (500)"
+        );
+        assert_eq!(
+            format_webdav_status_error("读取 WebDAV 文件失败", StatusCode::IM_A_TEAPOT),
+            "读取 WebDAV 文件失败: 请求被服务器拒绝 (418)"
+        );
+    }
+
+    #[tokio::test]
+    async fn reqwest_builder_error_falls_back_to_generic_message() {
+        // 非法 URL 在构建请求时即失败（is_builder，非 connect/request/timeout）
+        let err = reqwest::Client::new().get("not a url").send().await.unwrap_err();
+        assert!(err.is_builder());
+        assert!(!err.is_request());
+        let message = map_reqwest_error(err);
+        assert!(message.starts_with("WebDAV 请求失败: "), "got: {}", message);
+        assert_ne!(message, WEBDAV_NETWORK_ERROR);
+    }
+
+    #[tokio::test]
+    async fn reqwest_connect_error_maps_to_network_message() {
+        // 连接 127.0.0.1 未监听端口 -> is_connect
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_connect());
+        assert_eq!(
+            map_reqwest_error(err),
+            "无法连接 WebDAV 服务，请检查地址、网络或服务器状态"
+        );
+    }
+
+    #[tokio::test]
+    async fn reqwest_timeout_error_maps_to_timeout_message() {
+        // 本地服务器 accept 后不响应 -> 客户端读超时
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::Read;
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                // 保持连接不响应，直到客户端超时
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+        let err = reqwest::Client::new()
+            .get(format!("http://{}/", address))
+            .timeout(std::time::Duration::from_millis(100))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_timeout());
+        assert_eq!(map_reqwest_error(err), "WebDAV 请求超时");
+    }
+
+    #[test]
+    fn conflict_classifier_matches_409_variants() {
+        assert!(is_webdav_conflict("写入 WebDAV 文件失败: 目标目录不存在或路径冲突 (409)"));
+        assert!(is_webdav_conflict("Conflict"));
+        assert!(is_webdav_conflict("foo 409 bar"));
+        assert!(!is_webdav_conflict("500"));
+        assert!(!is_webdav_conflict(""));
+    }
+
+    #[test]
+    fn encryption_refresh_classifier_matches_decrypt_errors() {
+        assert!(should_refresh_encryption_config("WebDAV 数据解密失败，请检查云端加密密码"));
+        assert!(should_refresh_encryption_config("WebDAV 数据加密格式不兼容"));
+        assert!(should_refresh_encryption_config("WebDAV 数据不是 QuickClipboard 加密格式"));
+        assert!(!should_refresh_encryption_config("解析 WebDAV JSON 失败"));
+        assert!(!should_refresh_encryption_config("读取 WebDAV 文件失败"));
+    }
+
+    #[test]
+    fn encryption_scope_combines_base_url_and_username() {
+        let client = WebdavClient::new(config("https://dav.example.com/", "root")).unwrap();
+        assert_eq!(client.encryption_scope(), "https://dav.example.com/root\nuser");
+        let mut cfg = config("https://dav.example.com/", "root");
+        cfg.username = "  user  ".to_string();
+        let client = WebdavClient::new(cfg).unwrap();
+        assert_eq!(client.encryption_scope(), "https://dav.example.com/root\nuser");
+    }
 }

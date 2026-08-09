@@ -1,4 +1,5 @@
 use tauri::AppHandle;
+use crate::utils::WindowDragAndDropExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn create_text_editor_window(
@@ -39,7 +40,7 @@ pub fn create_text_editor_window(
     .skip_taskbar(false)
     .visible(true)
     .focused(true)
-    .drag_and_drop(false)
+    .drag_and_drop_cfg(false)
     .build()
     .map_err(|e| format!("创建文本编辑器窗口失败: {}", e))?;
 

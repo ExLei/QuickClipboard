@@ -9,6 +9,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
+use crate::utils::WindowDragAndDropExt;
 
 const PREVIEW_WINDOW_LABEL: &str = "preview-window";
 const PREVIEW_REUSE_TTL_MS: u64 = 60_000;
@@ -190,7 +191,7 @@ fn create_preview_window(
     .focused(false)
     .focusable(false)
     .visible(false)
-    .drag_and_drop(false)
+    .drag_and_drop_cfg(false)
     .build()
     .map_err(|e| format!("创建预览窗口失败: {}", e))?;
 

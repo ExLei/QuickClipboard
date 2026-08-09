@@ -112,3 +112,122 @@ pub fn remove_peer(device_id: &str) -> Result<bool, String> {
     save_peers(&peers)?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peer(device_id: &str, base_url: &str) -> PairedPeer {
+        PairedPeer {
+            device_id: device_id.to_string(),
+            device_name: format!("dev-{}", device_id),
+            base_url: base_url.to_string(),
+            peer_token: format!("tok-{}", device_id),
+            paired_at_ms: 1000,
+            last_seen_at_ms: None,
+        }
+    }
+
+    #[test]
+    fn normalized_base_url_trims_lowercases_strips_trailing_slash() {
+        assert_eq!(normalized_base_url("  HTTP://EXAMPLE.COM:35691/// "), "http://example.com:35691");
+        assert_eq!(normalized_base_url("http://192.168.1.5"), "http://192.168.1.5");
+        assert_eq!(normalized_base_url(""), "");
+    }
+
+    #[test]
+    fn same_peer_identity_matches_device_id_or_normalized_base_url() {
+        assert!(same_peer_identity(&peer("a", "http://x:1"), &peer("a", "http://y:2")));
+        assert!(same_peer_identity(
+            &peer("a", "http://X:1/"),
+            &peer("b", "HTTP://x:1")
+        ), "不同 device_id 但 base_url 规范化后相同 → 同一身份");
+        assert!(!same_peer_identity(&peer("a", "http://x:1"), &peer("b", "http://x:2")));
+        assert!(!same_peer_identity(&peer("a", ""), &peer("b", "")), "空 base_url 不构成身份");
+    }
+
+    #[test]
+    fn dedupe_peers_keeps_last_occurrence_per_identity() {
+        let peers = vec![
+            peer("a", "http://x:1"),
+            peer("a", "http://x:1"),
+            peer("b", "http://y:1"),
+        ];
+        let out = dedupe_peers(peers);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].device_id, "a");
+        assert_eq!(out[1].device_id, "b");
+    }
+
+    #[test]
+    fn dedupe_peers_by_normalized_base_url_keeps_last() {
+        let peers = vec![peer("a", "http://same:1"), peer("b", "HTTP://SAME:1/")];
+        let out = dedupe_peers(peers);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].device_id, "b", "后出现的条目胜出");
+    }
+
+    #[test]
+    fn paired_peer_new_sets_paired_at_and_no_last_seen() {
+        let p = PairedPeer::new("d1".to_string(), "name".to_string(), "http://x".to_string(), "tok".to_string());
+        assert_eq!(p.device_id, "d1");
+        assert_eq!(p.device_name, "name");
+        assert_eq!(p.base_url, "http://x");
+        assert_eq!(p.peer_token, "tok");
+        assert!(p.paired_at_ms > 0);
+        assert_eq!(p.last_seen_at_ms, None);
+    }
+
+    #[test]
+    fn paired_peer_info_drops_token_and_copies_fields() {
+        let p = PairedPeer {
+            device_id: "d1".to_string(),
+            device_name: "name".to_string(),
+            base_url: "http://x".to_string(),
+            peer_token: "secret-token".to_string(),
+            paired_at_ms: 123,
+            last_seen_at_ms: Some(456),
+        };
+        let info = p.info();
+        assert_eq!(info.device_id, "d1");
+        assert_eq!(info.device_name, "name");
+        assert_eq!(info.base_url, "http://x");
+        assert_eq!(info.paired_at_ms, 123);
+        assert_eq!(info.last_seen_at_ms, Some(456));
+    }
+
+    // ---- 未初始化 store（无 AppHandle）的确定性契约 ----
+
+    #[test]
+    fn list_peers_is_empty_without_store() {
+        assert!(list_peers().is_empty());
+    }
+
+    #[test]
+    fn list_peer_infos_is_empty_without_store() {
+        assert!(list_peer_infos().is_empty());
+    }
+
+    #[test]
+    fn save_peers_errors_without_store() {
+        assert_eq!(save_peers(&[]), Err("AppHandle 未初始化".to_string()));
+    }
+
+    #[test]
+    fn upsert_peer_errors_without_store() {
+        assert_eq!(
+            upsert_peer(peer("a", "http://x:1")),
+            Err("AppHandle 未初始化".to_string())
+        );
+    }
+
+    #[test]
+    fn mark_peer_seen_is_noop_without_peers() {
+        assert_eq!(mark_peer_seen("missing-device"), Ok(()));
+    }
+
+    #[test]
+    fn remove_peer_returns_false_without_peers() {
+        assert_eq!(remove_peer("missing-device"), Ok(false));
+    }
+}

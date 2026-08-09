@@ -335,3 +335,63 @@ fn get_repeat_interval(action: &str) -> Option<Duration> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::Mutex;
+
+    // NAVIGATION_THROTTLE_STATE 是进程级全局量，串行化访问
+    static NAVIGATION_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn throttle_delay_exact_values() {
+        assert_eq!(get_throttle_delay("navigate-up"), None);
+        assert_eq!(get_throttle_delay("navigate-down"), None);
+        assert_eq!(get_throttle_delay("tab-left"), Some(Duration::from_millis(150)));
+        assert_eq!(get_throttle_delay("tab-right"), Some(Duration::from_millis(150)));
+        assert_eq!(get_throttle_delay("previous-group"), Some(Duration::from_millis(100)));
+        assert_eq!(get_throttle_delay("next-group"), Some(Duration::from_millis(100)));
+        assert_eq!(get_throttle_delay("execute-item"), Some(Duration::from_millis(200)));
+        assert_eq!(get_throttle_delay("focus-search"), Some(Duration::from_millis(200)));
+        assert_eq!(get_throttle_delay("hide-window"), Some(Duration::from_millis(200)));
+        assert_eq!(get_throttle_delay("toggle-pin"), Some(Duration::from_millis(200)));
+        assert_eq!(get_throttle_delay("unknown-action"), Some(Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn repeat_interval_exact_values() {
+        assert_eq!(
+            get_repeat_interval("navigate-up"),
+            Some(Duration::from_millis(45))
+        );
+        assert_eq!(
+            get_repeat_interval("navigate-down"),
+            Some(Duration::from_millis(45))
+        );
+        assert_eq!(get_repeat_interval("tab-left"), Some(Duration::from_millis(150)));
+        assert_eq!(get_repeat_interval("tab-right"), Some(Duration::from_millis(150)));
+        assert_eq!(get_repeat_interval("previous-group"), Some(Duration::from_millis(100)));
+        assert_eq!(get_repeat_interval("next-group"), Some(Duration::from_millis(100)));
+        assert_eq!(get_repeat_interval("execute-item"), None);
+        assert_eq!(get_repeat_interval("hide-window"), None);
+        assert_eq!(get_repeat_interval("unknown-action"), None);
+    }
+
+    #[test]
+    fn throttle_window_blocks_repeats_until_elapsed() {
+        let _guard = NAVIGATION_TEST_LOCK.lock();
+        // 150ms 窗口：首次放行，窗口内拦截，窗口过后放行
+        assert!(!should_throttle("tab-left"), "首次应放行");
+        assert!(should_throttle("tab-left"), "窗口内应拦截");
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!should_throttle("tab-left"), "窗口过后应放行");
+    }
+
+    #[test]
+    fn non_throttled_actions_never_throttle() {
+        let _guard = NAVIGATION_TEST_LOCK.lock();
+        assert!(!should_throttle("navigate-up"));
+        assert!(!should_throttle("navigate-up"));
+    }
+}

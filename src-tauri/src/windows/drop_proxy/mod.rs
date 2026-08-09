@@ -8,6 +8,7 @@ use tauri::{
     AppHandle, DragDropEvent, Emitter, Manager, PhysicalPosition, PhysicalSize, Url,
     WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use crate::utils::WindowDragAndDropExt;
 
 const DROP_PROXY_LABEL: &str = "drop-proxy";
 const DROP_PROXY_PATHS_EVENT: &str = "drop-proxy-paths";
@@ -94,7 +95,7 @@ fn create_drop_proxy(app: &AppHandle) -> Result<WebviewWindow, String> {
     .focusable(false)
     .maximizable(false)
     .minimizable(false)
-    .drag_and_drop(true)
+    .drag_and_drop_cfg(true)
     .build()
     .map_err(|e| format!("创建拖放代理窗口失败: {}", e))?;
 
@@ -546,3 +547,152 @@ fn paths_to_strings(paths: &[std::path::PathBuf]) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        let seq = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "qc_drop_proxy_test_{}_{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
+    }
+
+    // ---- WR-22: sanitize_filename ----
+    #[test]
+    fn sanitize_filename_trims_and_strips_directories() {
+        assert_eq!(sanitize_filename("  hello.txt  "), "hello.txt");
+        assert_eq!(sanitize_filename("../evil"), "evil");
+        assert_eq!(sanitize_filename("/abs/path/name.txt"), "name.txt");
+        assert_eq!(sanitize_filename("文件.txt"), "文件.txt", "非 ASCII 保留");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn sanitize_filename_on_posix_escapes_backslashes_as_invalid_chars() {
+        // Linux/macOS：反斜杠不是路径分隔符，file_name() 保留整串，\ 按非法字符转义
+        assert_eq!(sanitize_filename("C:\\Users\\x\\file.txt"), "C__Users_x_file.txt");
+        assert_eq!(sanitize_filename("a\\b/c"), "c", "正斜杠仍是分隔符");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sanitize_filename_on_windows_takes_last_component() {
+        assert_eq!(sanitize_filename("C:\\Users\\x\\file.txt"), "file.txt");
+        assert_eq!(sanitize_filename("a\\b/c"), "c");
+    }
+
+    #[test]
+    fn sanitize_filename_escapes_windows_invalid_chars() {
+        assert_eq!(sanitize_filename("a<b>c:d|e?f*g"), "a_b_c_d_e_f_g");
+        assert_eq!(sanitize_filename("a\"b"), "a_b");
+        assert_eq!(sanitize_filename("a\u{1f}b"), "a_b", "控制字符转义");
+        assert_eq!(sanitize_filename("a\u{0}b"), "a_b");
+    }
+
+    #[test]
+    fn sanitize_filename_falls_back_and_truncates() {
+        assert_eq!(sanitize_filename(""), "drop-resource");
+        assert_eq!(sanitize_filename("...."), "drop-resource", "全点号视为空");
+        assert_eq!(sanitize_filename(".."), "drop-resource");
+        assert_eq!(sanitize_filename("hello."), "hello", "末尾点号被剥离");
+        let long = "x".repeat(200);
+        let out = sanitize_filename(&long);
+        assert_eq!(out.len(), 160, "截断到 160 字符");
+        assert!(out.chars().all(|ch| ch == 'x'));
+    }
+
+    // ---- WR-23: extension_from_content_type ----
+    #[test]
+    fn content_type_maps_to_extensions_exactly() {
+        assert_eq!(extension_from_content_type("image/png"), Some("png"));
+        assert_eq!(extension_from_content_type("image/jpeg"), Some("jpg"));
+        assert_eq!(extension_from_content_type("image/jpg"), Some("jpg"));
+        assert_eq!(extension_from_content_type("image/gif"), Some("gif"));
+        assert_eq!(extension_from_content_type("image/webp"), Some("webp"));
+        assert_eq!(extension_from_content_type("image/bmp"), Some("bmp"));
+        assert_eq!(extension_from_content_type("image/svg+xml"), Some("svg"));
+    }
+
+    #[test]
+    fn content_type_is_case_insensitive_and_ignores_params() {
+        assert_eq!(extension_from_content_type("IMAGE/PNG"), Some("png"));
+        assert_eq!(extension_from_content_type("image/png; charset=utf-8"), Some("png"));
+        assert_eq!(extension_from_content_type(" image/png "), Some("png"));
+    }
+
+    #[test]
+    fn unknown_content_types_have_no_extension() {
+        assert_eq!(extension_from_content_type("application/octet-stream"), None);
+        assert_eq!(extension_from_content_type("text/plain"), None);
+        assert_eq!(extension_from_content_type(""), None);
+        assert_eq!(extension_from_content_type("image/pngx"), None, "前缀不匹配不算");
+    }
+
+    // ---- WR-24: resolve_url_filename ----
+    #[test]
+    fn url_filename_prefers_existing_extension_then_url_then_content_type() {
+        assert_eq!(resolve_url_filename("pic.jpg", "/img", ""), "pic.jpg", "已有扩展名直接保留");
+        assert_eq!(resolve_url_filename("pic", "/images/photo.jpg", "image/png"), "pic.jpg", "URL 扩展名优先于 content-type");
+        assert_eq!(resolve_url_filename("pic", "/img", "image/png"), "pic.png");
+        assert_eq!(resolve_url_filename("pic", "/img/photo", ""), "pic", "无扩展名可用 -> 原样");
+        assert_eq!(resolve_url_filename("a.b.c", "/x", ""), "a.b.c");
+        assert_eq!(resolve_url_filename("../evil", "/a.png", ""), "evil.png", "先净化再补扩展名");
+        assert_eq!(resolve_url_filename("name", "/dir/file.", ""), "name", "空扩展名不算");
+    }
+
+    // ---- WR-25: next_available_path ----
+    #[test]
+    fn next_available_path_uses_suffix_numbering_when_collision() {
+        let dir = unique_temp_dir();
+        let base = dir.join("a.txt");
+        assert_eq!(next_available_path(&dir, "a.txt"), base, "不存在 -> 原名");
+        std::fs::write(&base, b"x").unwrap();
+        assert_eq!(next_available_path(&dir, "a.txt"), dir.join("a_1.txt"));
+        std::fs::write(dir.join("a_1.txt"), b"x").unwrap();
+        assert_eq!(next_available_path(&dir, "a.txt"), dir.join("a_2.txt"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn next_available_path_handles_extensionless_names() {
+        let dir = unique_temp_dir();
+        let base = dir.join("noext");
+        assert_eq!(next_available_path(&dir, "noext"), base);
+        std::fs::write(&base, b"x").unwrap();
+        assert_eq!(next_available_path(&dir, "noext"), dir.join("noext_1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- WR-26: paths_to_strings ----
+    #[test]
+    fn paths_to_strings_filters_empty_entries() {
+        let paths = vec![
+            std::path::PathBuf::from("a"),
+            std::path::PathBuf::from(""),
+            std::path::PathBuf::from("b/c"),
+        ];
+        assert_eq!(paths_to_strings(&paths), vec!["a", "b/c"]);
+        assert_eq!(paths_to_strings(&[]), Vec::<String>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paths_to_strings_lossy_converts_non_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let paths = vec![PathBuf::from(OsString::from_vec(b"a\xff".to_vec()))];
+        let out = paths_to_strings(&paths);
+        assert_eq!(out, vec!["a\u{fffd}"]);
+    }
+}
+

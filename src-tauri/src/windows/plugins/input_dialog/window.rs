@@ -1,6 +1,7 @@
 // 输入对话框窗口管理
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
+use crate::utils::WindowDragAndDropExt;
 
 // 输入框类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +69,7 @@ pub async fn show_dialog(
     .always_on_top(true)
     .focused(true)
     .visible(false)
-    .drag_and_drop(false)
+    .drag_and_drop_cfg(false)
     .build()
     .map_err(|e| format!("创建输入对话框失败: {}", e))?;
 

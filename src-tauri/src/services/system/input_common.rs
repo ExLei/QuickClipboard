@@ -37,3 +37,16 @@ pub(crate) fn set_mouse_monitoring_enabled(enabled: bool) {
 pub(crate) fn is_mouse_monitoring_enabled() -> bool {
     MOUSE_MONITORING_ENABLED.load(Ordering::Relaxed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_monitoring_flag_roundtrips() {
+        set_mouse_monitoring_enabled(true);
+        assert!(is_mouse_monitoring_enabled());
+        set_mouse_monitoring_enabled(false);
+        assert!(!is_mouse_monitoring_enabled());
+    }
+}

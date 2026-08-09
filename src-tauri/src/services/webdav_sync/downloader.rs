@@ -262,3 +262,54 @@ fn collect_image_ids(out: &mut HashSet<String>, raw: Option<&str>) {
         out.insert(item.to_string());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::collect_record_image_ids;
+    use crate::services::webdav_sync::types::CloudRecord;
+
+    fn record_with_images(image_id: Option<&str>) -> CloudRecord {
+        CloudRecord {
+            uuid: "u".to_string(),
+            source_device_id: "dev".to_string(),
+            is_remote: false,
+            content: "c".to_string(),
+            html_content: None,
+            content_type: "text".to_string(),
+            image_id: image_id.map(|s| s.to_string()),
+            source_app: None,
+            source_icon_hash: None,
+            char_count: None,
+            title: String::new(),
+            group_name: "全部".to_string(),
+            item_order: 0,
+            paste_count: 0,
+            created_at: 1,
+            updated_at: 2,
+        }
+    }
+
+    #[test]
+    fn collect_record_image_ids_aggregates_across_records() {
+        let records = vec![
+            record_with_images(Some("a,b")),
+            record_with_images(Some(" b ,c")),
+            record_with_images(None),
+        ];
+        let ids = collect_record_image_ids(&records);
+        assert_eq!(
+            ids,
+            std::collections::HashSet::from([
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn collect_record_image_ids_empty_without_images() {
+        let records = vec![record_with_images(None), record_with_images(Some(""))];
+        assert!(collect_record_image_ids(&records).is_empty());
+    }
+}

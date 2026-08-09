@@ -264,3 +264,104 @@ fn notify_lan_change(reason: &'static str) {
         crate::services::sync_transfer::lan_notify_local_change(app, reason);
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::paste::clipboard_content::FileInfo;
+
+    fn test_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("qc_cmd_fav_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_favorite(content_type: &str, content: &str) -> FavoriteItem {
+        FavoriteItem {
+            id: "fav-1".to_string(),
+            title: "t".to_string(),
+            content: content.to_string(),
+            html_content: None,
+            content_type: content_type.to_string(),
+            image_id: None,
+            group_name: String::new(),
+            item_order: 0,
+            paste_count: 0,
+            char_count: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn files_content(path: &str) -> String {
+        let data = FilesData {
+            files: vec![FileInfo {
+                path: path.to_string(),
+                name: String::new(),
+                size: 0,
+                is_directory: false,
+                icon_data: None,
+                file_type: String::new(),
+                exists: false,
+                actual_path: None,
+                width: None,
+                height: None,
+            }],
+            operation: String::new(),
+        };
+        format!("files:{}", serde_json::to_string(&data).unwrap())
+    }
+
+    #[test]
+    fn hydrate_favorite_file_item_marks_existing_file() {
+        let dir = test_dir();
+        let existing = dir.join("fav.txt");
+        std::fs::write(&existing, "hi").unwrap();
+
+        let mut item = make_favorite("file", &files_content(&existing.to_string_lossy()));
+        hydrate_favorite_item_for_ui(&mut item);
+
+        let data: FilesData = serde_json::from_str(&item.content[6..]).unwrap();
+        assert_eq!(data.files[0].exists, true);
+        assert_eq!(
+            data.files[0].actual_path.as_deref(),
+            Some(existing.to_str().unwrap())
+        );
+        let _ = std::fs::remove_file(&existing);
+    }
+
+    #[test]
+    fn hydrate_favorite_missing_file_marks_not_exists() {
+        let dir = test_dir();
+        let missing = dir.join("gone.txt");
+        let mut item = make_favorite("image", &files_content(&missing.to_string_lossy()));
+        hydrate_favorite_item_for_ui(&mut item);
+        let data: FilesData = serde_json::from_str(&item.content[6..]).unwrap();
+        assert_eq!(data.files[0].exists, false);
+        assert_eq!(
+            data.files[0].actual_path.as_deref(),
+            Some(missing.to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn hydrate_favorite_leaves_non_file_types_untouched() {
+        let content = files_content("/tmp/irrelevant.txt");
+        let mut item = make_favorite("text", &content);
+        hydrate_favorite_item_for_ui(&mut item);
+        assert_eq!(item.content, content);
+    }
+
+    #[test]
+    fn hydrate_favorite_leaves_malformed_files_json_untouched() {
+        let content = "files:{broken";
+        let mut item = make_favorite("file", content);
+        hydrate_favorite_item_for_ui(&mut item);
+        assert_eq!(item.content, content);
+    }
+
+    #[tokio::test]
+    async fn merge_copy_favorites_requires_selection() {
+        let err = merge_copy_favorite_items(vec![]).await.unwrap_err();
+        assert_eq!(err, "至少需要选择一项内容");
+    }
+}

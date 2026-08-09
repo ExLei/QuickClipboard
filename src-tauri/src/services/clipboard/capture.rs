@@ -1,4 +1,4 @@
-﻿use clipboard_rs::{common::RustImage, Clipboard, ClipboardContext, RustImageData};
+use clipboard_rs::{common::RustImage, Clipboard, ClipboardContext, RustImageData};
 
 use crate::services::database::ClipboardDataSeed;
 use regex::Regex;
@@ -397,4 +397,191 @@ fn is_image_only_html(html: Option<&str>) -> bool {
     let mut text = tag_regex.replace_all(html, " ").to_string();
     text = entity_regex.replace_all(&text, " ").to_string();
     text.trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database::ClipboardDataSeed;
+
+    fn seed(name: &str, data: &[u8]) -> ClipboardDataSeed {
+        ClipboardDataSeed {
+            format_name: name.to_string(),
+            raw_data: data.to_vec(),
+            is_primary: false,
+            format_order: 0,
+        }
+    }
+
+    fn text_content(text: Option<&str>) -> ClipboardContent {
+        ClipboardContent {
+            content_type: ContentType::Text,
+            text: text.map(|s| s.to_string()),
+            html: None,
+            files: None,
+            image_path: None,
+            raw_formats: Vec::new(),
+        }
+    }
+
+    // b_image_only_html_settle —— 纯判定函数部分（settle 循环本身需要真实剪贴板）
+    #[test]
+    fn image_only_html_detection_matches_contract() {
+        assert!(is_image_only_html(Some("<html><body><img src=\"x.png\"></body></html>")));
+        assert!(is_image_only_html(Some("<img src=\"x\"> &nbsp;")));
+        assert!(is_image_only_html(Some("<div><img src=\"x\"><br></div>")));
+        assert!(!is_image_only_html(Some("<img src=\"x\"><p>text</p>")));
+        assert!(!is_image_only_html(Some("<p>no image here</p>")));
+        assert!(!is_image_only_html(Some("&nbsp;&nbsp;")));
+        assert!(!is_image_only_html(None));
+    }
+
+    #[test]
+    fn retry_gates_match_contract() {
+        // 纯文本 + HTML Format/RTF 候选 buffer → 需要富文本重试
+        let plain_with_candidate = ClipboardContent {
+            raw_formats: vec![seed("HTML Format", b"<b>x</b>")],
+            ..text_content(Some("hi"))
+        };
+        assert!(needs_rich_text_retry(&plain_with_candidate));
+        assert!(!needs_image_retry(&plain_with_candidate));
+        assert!(needs_capture_retry(&plain_with_candidate));
+
+        // 已拿到 html → 不再重试
+        let with_html = ClipboardContent {
+            content_type: ContentType::RichText,
+            text: Some("hi".to_string()),
+            html: Some("<b>hi</b>".to_string()),
+            files: None,
+            image_path: None,
+            raw_formats: vec![seed("HTML Format", b"<b>hi</b>")],
+        };
+        assert!(!needs_rich_text_retry(&with_html));
+        assert!(!needs_capture_retry(&with_html));
+
+        // 纯 image-only HTML 且没有图片 → 需要图片重试
+        let img_only_html = ClipboardContent {
+            content_type: ContentType::RichText,
+            text: None,
+            html: Some("<img src=\"x.png\">".to_string()),
+            files: None,
+            image_path: None,
+            raw_formats: Vec::new(),
+        };
+        assert!(needs_image_retry(&img_only_html));
+        assert!(needs_capture_retry(&img_only_html));
+
+        // 图片已到手 → 永不重试
+        let with_image = ClipboardContent {
+            image_path: Some("clipboard_images/a.png".to_string()),
+            ..text_content(Some("hi"))
+        };
+        assert!(!needs_image_retry(&with_image));
+        assert!(!needs_capture_retry(&with_image));
+
+        // RTF 候选同样触发
+        assert!(has_rich_text_candidate_format(&[seed("Rich Text Format", b"{\\rtf1}")]));
+        assert!(has_rich_text_candidate_format(&[seed("HTML Format", b"")]));
+        assert!(!has_rich_text_candidate_format(&[seed("CF_TEXT", b"t")]));
+        assert!(!has_rich_text_candidate_format(&[]));
+    }
+
+    #[test]
+    fn primary_format_prefers_contract_order_and_falls_back() {
+        let formats = vec![
+            seed("CF_TEXT", b"t"),
+            seed("CF_UNICODETEXT", b"u"),
+            seed("HTML Format", b"h"),
+        ];
+        assert_eq!(
+            pick_primary_format_name(&ContentType::RichText, &formats).as_deref(),
+            Some("HTML Format")
+        );
+        assert_eq!(
+            pick_primary_format_name(&ContentType::Text, &formats).as_deref(),
+            Some("CF_UNICODETEXT")
+        );
+        let file_formats = vec![seed("CF_UNICODETEXT", b"u"), seed("CF_HDROP", b"f")];
+        assert_eq!(
+            pick_primary_format_name(&ContentType::Files, &file_formats).as_deref(),
+            Some("CF_HDROP")
+        );
+        // 首选格式不存在 → 退回第一个
+        assert_eq!(
+            pick_primary_format_name(&ContentType::Files, &formats).as_deref(),
+            Some("CF_TEXT")
+        );
+        assert_eq!(pick_primary_format_name(&ContentType::Text, &[]), None);
+    }
+
+    #[test]
+    fn supported_raw_format_whitelist_is_exact() {
+        for name in ["CF_HDROP", "CF_TEXT", "CF_UNICODETEXT", "HTML Format", "Rich Text Format"] {
+            assert!(is_supported_raw_format(name), "{} 应在白名单", name);
+        }
+        assert!(!is_supported_raw_format("application/x-custom"));
+        assert!(!is_supported_raw_format("text/plain"));
+        assert!(!is_supported_raw_format("__QC_IMAGE_PNG_PATH__"));
+    }
+
+    // b_exact_redetection_skip —— 哈希方案（缓存门本身在真实剪贴板 worker 循环内）
+    #[test]
+    fn capture_hash_uses_raw_format_scheme_when_present() {
+        let content = ClipboardContent {
+            raw_formats: vec![seed("CF_UNICODETEXT", b"abc")],
+            ..text_content(Some("abc"))
+        };
+        // sha256("CF_UNICODETEXT\0abc\0")
+        assert_eq!(
+            content.calculate_hash(),
+            "ab52f5fc47c1b780e0db3fb7f5009a9b88d291475040ba0b62e3a0fa3d170564"
+        );
+    }
+
+    #[test]
+    fn capture_hash_falls_back_to_text_bytes_without_raw_formats() {
+        let content = text_content(Some("abc"));
+        // sha256("abc")
+        assert_eq!(
+            content.calculate_hash(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // 相同内容 → 相同哈希；不同内容 → 不同哈希
+        assert_eq!(content.calculate_hash(), text_content(Some("abc")).calculate_hash());
+        assert_ne!(content.calculate_hash(), text_content(Some("abd")).calculate_hash());
+    }
+
+    #[test]
+    fn capture_hash_normalizes_file_paths() {
+        let content = ClipboardContent {
+            content_type: ContentType::Files,
+            text: None,
+            html: None,
+            files: Some(vec![
+                "C:\\data\\clipboard_images\\a.png".to_string(),
+                "/abs/b.txt".to_string(),
+            ]),
+            image_path: None,
+            raw_formats: Vec::new(),
+        };
+        // sha256("clipboard_images/a.png/abs/b.txt")（\ → /，并截到 clipboard_images/ 前缀）
+        assert_eq!(
+            content.calculate_hash(),
+            "c5c1685126caef678f9a939288a7233aef0ac891b6a79b1d3c1c07f116696a3e"
+        );
+    }
+
+    #[test]
+    fn internal_image_format_seed_is_appended_last_and_non_primary() {
+        let mut formats = vec![seed("CF_UNICODETEXT", b"u")];
+        append_internal_image_raw_format(&mut formats, "clipboard_images/abc.png");
+        assert_eq!(formats.len(), 2);
+        assert_eq!(
+            formats[1].format_name,
+            crate::services::clipboard::INTERNAL_IMAGE_PATH_FORMAT
+        );
+        assert_eq!(formats[1].raw_data, b"clipboard_images/abc.png");
+        assert!(!formats[1].is_primary);
+        assert_eq!(formats[1].format_order, 1, "追加在末尾，order = 当前长度");
+    }
 }

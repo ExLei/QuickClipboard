@@ -21,3 +21,15 @@ pub use snapshot::{LanGroupBatch, LanRecordBatch, LanSyncSnapshot, LanTombstoneB
 pub use discovery::DiscoveredLanPeer;
 pub use transfer::{FileTransferProgress, FileTransferProgressCallback, FileTransferResult};
 pub use auto_sync::{LanAutoSyncSettings, LanAutoSyncStatus};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protocol_constants_are_exact() {
+        assert_eq!(DEFAULT_PAIRING_CODE_TTL_SECS, 300);
+        assert_eq!(DEFAULT_PAIRING_MAX_ATTEMPTS, 5);
+        assert_eq!(DEFAULT_HTTP_PORT, 35691);
+    }
+}

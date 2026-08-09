@@ -219,3 +219,120 @@ fn ipv4_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
     let netmask = u32::from(netmask);
     Ipv4Addr::from(ip | !netmask)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ipv4_broadcast_computes_subnet_broadcast() {
+        let ip: Ipv4Addr = "192.168.1.5".parse().unwrap();
+        let mask: Ipv4Addr = "255.255.255.0".parse().unwrap();
+        let expected: Ipv4Addr = "192.168.1.255".parse().unwrap();
+        assert_eq!(ipv4_broadcast(ip, mask), expected);
+
+        let ip: Ipv4Addr = "10.0.0.1".parse().unwrap();
+        let mask: Ipv4Addr = "255.0.0.0".parse().unwrap();
+        let expected: Ipv4Addr = "10.255.255.255".parse().unwrap();
+        assert_eq!(ipv4_broadcast(ip, mask), expected);
+
+        let ip: Ipv4Addr = "172.16.0.1".parse().unwrap();
+        let mask: Ipv4Addr = "255.240.0.0".parse().unwrap();
+        let expected: Ipv4Addr = "172.31.255.255".parse().unwrap();
+        assert_eq!(ipv4_broadcast(ip, mask), expected);
+    }
+
+    #[test]
+    fn discovery_targets_always_starts_with_global_broadcast() {
+        let targets = discovery_targets();
+        assert!(!targets.is_empty());
+        assert_eq!(targets[0], SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), DISCOVERY_PORT));
+        assert_eq!(targets[0].port(), 35692);
+        assert!(targets.iter().all(|t| t.port() == DISCOVERY_PORT));
+    }
+
+    #[test]
+    fn discovery_targets_are_deduplicated_ipv4_broadcasts() {
+        let targets = discovery_targets();
+        let mut ips = targets.iter().map(|t| t.ip()).collect::<Vec<_>>();
+        ips.sort();
+        ips.dedup();
+        assert_eq!(ips.len(), targets.len(), "无重复目标");
+        assert!(targets.iter().all(|t| t.is_ipv4()));
+    }
+
+    fn valid_request(device_id: &str) -> DiscoveryPacket {
+        DiscoveryPacket {
+            protocol: DISCOVERY_PROTOCOL.to_string(),
+            kind: "request".to_string(),
+            device_id: device_id.to_string(),
+            device_name: "peer".to_string(),
+            http_port: 0,
+        }
+    }
+
+    #[test]
+    fn is_valid_request_accepts_protocol_request_from_other_device() {
+        let packet = valid_request("some-other-device");
+        let bytes = serde_json::to_vec(&packet).unwrap();
+        assert!(is_valid_request(&bytes));
+    }
+
+    #[test]
+    fn is_valid_request_rejects_wrong_protocol_kind_and_self() {
+        let mut packet = valid_request("other");
+        packet.protocol = "other-protocol".to_string();
+        assert!(!is_valid_request(&serde_json::to_vec(&packet).unwrap()));
+
+        let mut packet = valid_request("other");
+        packet.kind = "response".to_string();
+        assert!(!is_valid_request(&serde_json::to_vec(&packet).unwrap()));
+
+        // 本机自己的 device_id → 忽略
+        let packet = valid_request(&super::super::runtime::device_id());
+        assert!(!is_valid_request(&serde_json::to_vec(&packet).unwrap()));
+    }
+
+    #[test]
+    fn is_valid_request_rejects_garbage() {
+        assert!(!is_valid_request(b"not json"));
+        assert!(!is_valid_request(b""));
+    }
+
+    #[test]
+    fn response_packet_carries_http_port_and_identity() {
+        let _guard = super::super::runtime::tests::PAIRING_TEST_LOCK.lock();
+        let packet = response_packet(12345);
+        assert_eq!(packet.protocol, "quickclipboard-sync-transfer-lan-discovery");
+        assert_eq!(packet.kind, "response");
+        assert_eq!(packet.http_port, 12345);
+        // device_id 形状：UUID v4（36 字符、版本位为 '4'、全 hexdigit 或 '-'）
+        let id = &packet.device_id;
+        assert_eq!(id.len(), 36, "device_id 必须是 UUID 形状");
+        assert_eq!(&id[14..15], "4", "UUID v4 版本位");
+        assert!(
+            id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'),
+            "device_id 只能含十六进制字符与连字符"
+        );
+        assert!(!packet.device_name.is_empty());
+    }
+
+    #[test]
+    fn local_endpoints_are_sorted_deduped_non_loopback_with_port() {
+        let endpoints = local_endpoints(35691);
+        let mut prev: Option<&str> = None;
+        for endpoint in &endpoints {
+            assert!(!endpoint.ip.contains("127."), "环回地址被排除: {}", endpoint.ip);
+            assert_eq!(endpoint.base_url, format!("http://{}:35691", endpoint.ip));
+            if let Some(prev_ip) = prev {
+                assert!(prev_ip < endpoint.ip.as_str(), "按 ip 排序");
+            }
+            prev = Some(&endpoint.ip);
+        }
+    }
+
+    #[test]
+    fn responder_not_running_by_default() {
+        assert!(!is_running());
+    }
+}

@@ -257,6 +257,111 @@ fn current_time_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_are_both_disabled() {
+        let settings = LanAutoSyncSettings::default();
+        assert!(!settings.send_enabled);
+        assert!(!settings.receive_enabled);
+    }
+
+    #[test]
+    fn settings_read_legacy_aliases_auto_push_auto_pull() {
+        let parsed: LanAutoSyncSettings =
+            serde_json::from_str(r#"{"auto_push": true, "auto_pull": true}"#).unwrap();
+        assert!(parsed.send_enabled);
+        assert!(parsed.receive_enabled);
+
+        let parsed: LanAutoSyncSettings =
+            serde_json::from_str(r#"{"send_enabled": true}"#).unwrap();
+        assert!(parsed.send_enabled);
+        assert!(!parsed.receive_enabled);
+
+        let parsed: LanAutoSyncSettings = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!parsed.send_enabled);
+        assert!(!parsed.receive_enabled);
+    }
+
+    #[test]
+    fn can_send_can_receive_reflect_settings() {
+        let settings = LanAutoSyncSettings {
+            send_enabled: true,
+            receive_enabled: false,
+        };
+        assert!(settings.can_send());
+        assert!(!settings.receive_enabled);
+
+        let settings = LanAutoSyncSettings {
+            send_enabled: false,
+            receive_enabled: true,
+        };
+        assert!(!settings.can_send());
+        assert!(settings.receive_enabled);
+    }
+
+    // ---- 未初始化 store（无 AppHandle）的确定性契约 ----
+
+    #[test]
+    fn settings_default_to_disabled_without_store() {
+        let settings = settings();
+        assert!(!settings.send_enabled);
+        assert!(!settings.receive_enabled);
+    }
+
+    #[test]
+    fn can_receive_is_false_without_store() {
+        assert!(!can_receive());
+    }
+
+    #[test]
+    fn update_settings_errors_without_store() {
+        let err = update_settings(LanAutoSyncSettings {
+            send_enabled: true,
+            receive_enabled: true,
+        })
+        .unwrap_err();
+        assert_eq!(err, "AppHandle 未初始化");
+    }
+
+    #[test]
+    fn status_has_no_last_report_without_store() {
+        let status = status();
+        assert!(!status.settings.send_enabled);
+        assert!(status.last_report.is_none());
+    }
+
+    #[test]
+    fn mark_peer_failed_backoff_steps_are_exact() {
+        let device_id = "test-backoff-device";
+        // 先清理该设备的状态，保证测试确定性
+        PEER_SYNC_STATES.lock().remove(device_id);
+
+        let expected = [1_000i64, 3_000, 10_000, 30_000, 30_000];
+        for (i, expect_delay) in expected.iter().enumerate() {
+            let before = current_time_ms();
+            let delay = mark_peer_failed(device_id);
+            assert_eq!(delay, *expect_delay, "第 {} 次失败的退避延迟", i + 1);
+
+            let state = PEER_SYNC_STATES.lock().get(device_id).cloned().unwrap();
+            let retry_at = state.retry_after_ms.expect("必须设置重试时间");
+            assert_eq!(state.failure_count, (i + 1) as u32);
+            assert!(retry_at >= before + expect_delay, "重试时间 = 当前 + 延迟");
+            assert!(retry_at <= before + expect_delay + 1_000, "重试时间不得远超前");
+            assert!(!state.retry_scheduled);
+        }
+
+        PEER_SYNC_STATES.lock().remove(device_id);
+    }
+
+    #[test]
+    fn failed_peer_backoff_steps_constant_is_exact() {
+        assert_eq!(FAILED_PEER_BACKOFF_STEPS_MS, [1_000, 3_000, 10_000, 30_000]);
+    }
+}
+
 fn store_report(app: &AppHandle, mode: &'static str, peer_device_id: String, result: SyncReport) {
     let event = LanAutoSyncReportEvent {
         mode: mode.to_string(),

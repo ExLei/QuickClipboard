@@ -6,6 +6,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use super::pairing::PairingConfirmResponse;
+use super::peer_store::PairedPeer;
+use super::runtime::token_matches_peer;
 
 const HEADER_LIMIT: usize = 64 * 1024;
 const HELLO_PATH: &str = "/qc-sync/hello";
@@ -95,11 +97,17 @@ pub fn confirm_pairing(input: HttpPairingConfirmRequest) -> Result<PairingConfir
     })
 }
 
-pub fn verify_authorization(device_id: &str, authorization: &str) -> bool {
+/// 纯决策函数：给定已配对设备列表与 Authorization 头，判断是否授权。
+/// 保持与旧实现相同的 trim 语义（device_id 与 token 均 trim 后比较）。
+fn bearer_authorized(peers: &[PairedPeer], device_id: &str, authorization: &str) -> bool {
     let Some(token) = authorization.trim().strip_prefix("Bearer ") else {
         return false;
     };
-    super::runtime::verify_peer_token(device_id, token)
+    token_matches_peer(peers, device_id.trim(), token.trim())
+}
+
+pub fn verify_authorization(device_id: &str, authorization: &str) -> bool {
+    bearer_authorized(&super::peer_store::list_peers(), device_id, authorization)
 }
 
 pub fn is_running() -> bool {
@@ -569,6 +577,107 @@ fn pairing_base_url_port(base_url: &str) -> Option<u16> {
     let trimmed = base_url.trim().trim_end_matches('/');
     let (_, port) = trimmed.rsplit_once(':')?;
     port.parse::<u16>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn default_server_config_uses_default_port() {
+        assert_eq!(LanHttpServerConfig::default().port, super::super::DEFAULT_HTTP_PORT);
+        assert_eq!(super::super::DEFAULT_HTTP_PORT, 35691);
+    }
+
+    #[test]
+    fn pairing_base_url_port_parses_trailing_port() {
+        assert_eq!(pairing_base_url_port("http://192.168.1.5:35691"), Some(35691));
+        assert_eq!(pairing_base_url_port("http://192.168.1.5:35691/"), Some(35691), "尾斜杠被裁剪");
+        assert_eq!(pairing_base_url_port("http://x"), None);
+        assert_eq!(pairing_base_url_port(""), None);
+        assert_eq!(pairing_base_url_port("http://x:99999"), None, "u16 溢出 → None");
+        assert_eq!(pairing_base_url_port("http://[::1]:8080"), Some(8080));
+    }
+
+    #[test]
+    fn verify_authorization_requires_bearer_scheme() {
+        assert!(!verify_authorization("", ""));
+        assert!(!verify_authorization("dev", "tok"));
+        assert!(!verify_authorization("dev", "Bearer "), "空 token");
+        // 无已配对设备 → 即使格式正确也拒绝
+        assert!(!verify_authorization("dev", "Bearer tok"));
+    }
+
+    #[test]
+    fn bearer_authorized_accepts_exact_bearer_token() {
+        let peers = vec![PairedPeer::new(
+            "dev-1".to_string(),
+            "one".to_string(),
+            "http://1".to_string(),
+            "tok-1".to_string(),
+        )];
+        // 正向：'Bearer tok' 命中
+        assert!(bearer_authorized(&peers, "dev-1", "Bearer tok-1"));
+        // trim 语义与旧 verify_peer_token 一致
+        assert!(bearer_authorized(&peers, " dev-1 ", "  Bearer tok-1  "));
+        // 反向：无 Bearer 前缀 / 空 token / 错 token / 错设备
+        assert!(!bearer_authorized(&peers, "dev-1", "tok-1"));
+        assert!(!bearer_authorized(&peers, "dev-1", "Bearer "));
+        assert!(!bearer_authorized(&peers, "dev-1", "Bearer wrong"));
+        assert!(!bearer_authorized(&peers, "dev-2", "Bearer tok-1"));
+    }
+
+    #[test]
+    fn normalize_pairing_base_url_replaces_loopback_and_empty_with_remote_ip() {
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 1234);
+
+        // 空地址 → 远端 ip + 默认端口
+        let input = HttpPairingConfirmRequest {
+            device_id: "d".into(),
+            device_name: "n".into(),
+            base_url: "".into(),
+            pairing_code: "000000".into(),
+        };
+        let out = normalize_pairing_base_url(input, remote);
+        assert_eq!(out.base_url, "http://10.0.0.5:35691");
+
+        // 本地回环地址 → 远端 ip + 原端口
+        let input = HttpPairingConfirmRequest {
+            device_id: "d".into(),
+            device_name: "n".into(),
+            base_url: "http://127.0.0.1:7000/".into(),
+            pairing_code: "000000".into(),
+        };
+        let out = normalize_pairing_base_url(input, remote);
+        assert_eq!(out.base_url, "http://10.0.0.5:7000");
+
+        // localhost 无端口 → 远端 ip + 默认端口
+        let input = HttpPairingConfirmRequest {
+            device_id: "d".into(),
+            device_name: "n".into(),
+            base_url: "localhost".into(),
+            pairing_code: "000000".into(),
+        };
+        let out = normalize_pairing_base_url(input, remote);
+        assert_eq!(out.base_url, "http://10.0.0.5:35691");
+
+        // 合法的远端地址保持不变
+        let input = HttpPairingConfirmRequest {
+            device_id: "d".into(),
+            device_name: "n".into(),
+            base_url: "http://192.168.1.9:35691".into(),
+            pairing_code: "000000".into(),
+        };
+        let out = normalize_pairing_base_url(input, remote);
+        assert_eq!(out.base_url, "http://192.168.1.9:35691");
+    }
+
+    #[test]
+    fn server_not_running_by_default() {
+        assert!(!is_running());
+        assert_eq!(running_port(), None);
+    }
 }
 
 struct HttpRequest {

@@ -369,3 +369,82 @@ fn collect_image_ids(out: &mut HashSet<String>, raw: Option<&str>) {
         out.insert(item.to_string());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{chunk_record_counts, collect_image_ids, metas_newer_than_index};
+    use crate::services::webdav_sync::types::{CloudRecordMeta, SyncIndex, SyncIndexEntry};
+    use std::collections::{HashMap, HashSet};
+
+    fn meta(uuid: &str, updated_at: i64) -> CloudRecordMeta {
+        CloudRecordMeta {
+            uuid: uuid.to_string(),
+            updated_at,
+            image_id: None,
+        }
+    }
+
+    #[test]
+    fn metas_newer_than_index_keeps_missing_and_newer() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "known".to_string(),
+            SyncIndexEntry {
+                chunk: 0,
+                updated_at: 100,
+                source_device_id: "dev".to_string(),
+            },
+        );
+        let metas = vec![meta("new", 50), meta("known", 101), meta("known", 100), meta("known", 99)];
+        let selected = metas_newer_than_index(metas, &entries);
+        let uuids = selected.iter().map(|m| m.uuid.as_str()).collect::<Vec<_>>();
+        // 索引中没有的保留；严格晚于索引更新的保留；等于或早于的剔除
+        assert_eq!(uuids, vec!["new", "known"]);
+        assert_eq!(selected[1].updated_at, 101);
+    }
+
+    #[test]
+    fn chunk_record_counts_aggregates_per_chunk_in_order() {
+        let mut entries = HashMap::new();
+        for (uuid, chunk) in [("a", 0u32), ("b", 0), ("c", 1), ("d", 5)] {
+            entries.insert(
+                uuid.to_string(),
+                SyncIndexEntry {
+                    chunk,
+                    updated_at: 1,
+                    source_device_id: "dev".to_string(),
+                },
+            );
+        }
+        let counts = chunk_record_counts(&entries);
+        let pairs = counts.into_iter().collect::<Vec<_>>();
+        assert_eq!(pairs, vec![(0, 2usize), (1, 1), (5, 1)]);
+    }
+
+    #[test]
+    fn chunk_record_counts_empty_index_is_empty() {
+        let counts = chunk_record_counts(&HashMap::new());
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn collect_image_ids_parses_comma_lists() {
+        let mut out = HashSet::new();
+        collect_image_ids(&mut out, None);
+        assert!(out.is_empty());
+        collect_image_ids(&mut out, Some(""));
+        assert!(out.is_empty());
+        collect_image_ids(&mut out, Some("a, b ,c"));
+        assert_eq!(out, HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()]));
+        let mut out = HashSet::new();
+        collect_image_ids(&mut out, Some(",,a,,"));
+        assert_eq!(out, HashSet::from(["a".to_string()]));
+    }
+
+    #[test]
+    fn sync_index_default_has_no_entries() {
+        let index = SyncIndex::default();
+        assert!(index.entries.is_empty());
+        assert_eq!(index.next_chunk, 0);
+    }
+}

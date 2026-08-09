@@ -320,3 +320,179 @@ fn is_valid_image_id(image_id: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_direct_transfer_file_size_is_512mb() {
+        assert_eq!(MAX_DIRECT_TRANSFER_FILE_SIZE, 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn sanitize_file_name_percent_decodes_and_strips_path_components() {
+        assert_eq!(sanitize_file_name("a%20b.txt").unwrap(), "a b.txt");
+        assert_eq!(sanitize_file_name("..%2Fsecret.txt").unwrap(), "secret.txt", "路径穿越被压平为文件名");
+        assert_eq!(sanitize_file_name("/etc/passwd").unwrap(), "passwd");
+        assert_eq!(sanitize_file_name("  spaced.txt  ").unwrap(), "spaced.txt", "首尾空白被裁剪");
+    }
+
+    #[test]
+    fn sanitize_file_name_rejects_dangerous_names() {
+        assert_eq!(sanitize_file_name("").unwrap_err(), "文件名无效");
+        assert_eq!(sanitize_file_name("   ").unwrap_err(), "文件名无效");
+        assert_eq!(sanitize_file_name(".").unwrap_err(), "文件名无效");
+        assert_eq!(sanitize_file_name("..").unwrap_err(), "文件名无效");
+        assert_eq!(sanitize_file_name("%2E%2E").unwrap_err(), "文件名无效", "解码后为 ..");
+        assert_eq!(sanitize_file_name("a:b.txt").unwrap_err(), "文件名包含非法字符");
+        assert_eq!(sanitize_file_name("%ZZ.txt").unwrap_err(), "文件名编码无效");
+        assert_eq!(sanitize_file_name("a%2").unwrap_err(), "文件名编码无效");
+    }
+
+    #[test]
+    fn percent_decode_handles_valid_and_invalid_escapes() {
+        assert_eq!(percent_decode("abc%20def").unwrap(), "abc def");
+        assert_eq!(percent_decode("100%25").unwrap(), "100%");
+        assert_eq!(percent_decode("a%2Fb").unwrap(), "a/b");
+        assert_eq!(percent_decode("%%").unwrap_err(), "文件名编码无效");
+        assert_eq!(percent_decode("%G0").unwrap_err(), "文件名编码无效");
+        assert_eq!(percent_decode("%FF").unwrap_err(), "文件名编码无效", "非 UTF-8 字节序列被拒绝");
+    }
+
+    #[test]
+    fn unique_path_avoids_existing_files_with_numbered_suffix() {
+        let dir = std::env::temp_dir().join(format!("qc_files_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), b"x").unwrap();
+        std::fs::write(dir.join("a (1).txt"), b"x").unwrap();
+        let reserved = std::collections::HashSet::new();
+
+        assert_eq!(unique_path(&dir, "b.txt", &reserved), dir.join("b.txt"));
+        assert_eq!(unique_path(&dir, "a.txt", &reserved), dir.join("a (2).txt"));
+
+        // 保留集合中的候选同样被跳过：c.txt 已存在且 c (1).txt 被保留 → c (2).txt
+        std::fs::write(dir.join("c.txt"), b"x").unwrap();
+        let mut reserved = std::collections::HashSet::new();
+        reserved.insert(dir.join("c (1).txt"));
+        assert_eq!(unique_path(&dir, "c.txt", &reserved), dir.join("c (2).txt"));
+
+        // 无扩展名文件
+        assert_eq!(unique_path(&dir, "plain", &reserved), dir.join("plain"));
+        std::fs::write(dir.join("plain"), b"x").unwrap();
+        assert_eq!(unique_path(&dir, "plain", &reserved), dir.join("plain (1)"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_valid_image_id_accepts_alnum_dash_underscore_only() {
+        assert!(is_valid_image_id("abc123"));
+        assert!(is_valid_image_id("a-b_c"));
+        assert!(is_valid_image_id(&"x".repeat(128)));
+        assert!(!is_valid_image_id(""));
+        assert!(!is_valid_image_id(&"x".repeat(129)));
+        assert!(!is_valid_image_id("a b"));
+        assert!(!is_valid_image_id("a/b"));
+        assert!(!is_valid_image_id("中文"));
+        assert!(!is_valid_image_id("a!b"));
+    }
+
+    #[test]
+    fn collect_record_image_ids_parses_trims_filters_dedupes() {
+        fn record(image_id: Option<&str>) -> CloudRecord {
+            let mut r = CloudRecord {
+                uuid: String::new(),
+                source_device_id: String::new(),
+                is_remote: false,
+                content: String::new(),
+                html_content: None,
+                content_type: "text".to_string(),
+                image_id: None,
+                source_app: None,
+                source_icon_hash: None,
+                char_count: None,
+                title: String::new(),
+                group_name: "全部".to_string(),
+                item_order: 0,
+                paste_count: 0,
+                created_at: 0,
+                updated_at: 0,
+            };
+            r.image_id = image_id.map(|s| s.to_string());
+            r
+        }
+
+        let records = vec![
+            record(Some("img-1, img-2,  img-1")),
+            record(Some("bad id,img-3")),
+            record(None),
+            record(Some("")),
+        ];
+        let mut ids = collect_record_image_ids(&records);
+        ids.sort();
+        assert_eq!(ids, vec!["img-1", "img-2", "img-3"], "逗号分隔、去重、非法 id 过滤");
+    }
+
+    #[test]
+    fn file_name_from_transfer_path_strips_prefix_and_sanitizes() {
+        assert_eq!(file_name_from_transfer_path("/qc-transfer/files/photo.png").unwrap(), "photo.png");
+        assert_eq!(
+            file_name_from_transfer_path("/qc-transfer/files/a%20b.txt").unwrap(),
+            "a b.txt"
+        );
+        assert_eq!(file_name_from_transfer_path("/qc-transfer/files/").unwrap_err(), "文件名无效");
+        assert_eq!(
+            file_name_from_transfer_path("/other/path/x.txt").unwrap_err(),
+            "无效的局域网传输路径"
+        );
+    }
+
+    #[test]
+    fn image_id_from_file_path_strips_prefix_and_suffix() {
+        assert_eq!(image_id_from_file_path("/qc-sync/files/abc123.png").unwrap(), "abc123");
+        assert_eq!(image_id_from_file_path("/qc-sync/files/a-b_c.png").unwrap(), "a-b_c");
+        assert_eq!(
+            image_id_from_file_path("/qc-sync/files/abc.jpg").unwrap_err(),
+            "仅支持 png 图片文件"
+        );
+        assert_eq!(
+            image_id_from_file_path("/qc-sync/files/bad id.png").unwrap_err(),
+            "无效的图片 ID"
+        );
+        assert_eq!(
+            image_id_from_file_path("/other/x.png").unwrap_err(),
+            "无效的局域网文件路径"
+        );
+    }
+
+    #[test]
+    fn is_received_file_internal_detects_index_dotfiles_and_parts() {
+        assert!(is_received_file_internal(Path::new("index.json")));
+        assert!(is_received_file_internal(Path::new(".hidden")));
+        assert!(is_received_file_internal(Path::new("photo.png.qcpart")));
+        assert!(!is_received_file_internal(Path::new("normal.txt")));
+        assert!(!is_received_file_internal(Path::new("index.json.bak")));
+    }
+
+    #[test]
+    fn outgoing_file_info_returns_name_size_and_errors() {
+        let dir = std::env::temp_dir().join(format!("qc_files_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("hello.txt");
+        std::fs::write(&file, b"hello").unwrap();
+
+        let (name, path, size) = outgoing_file_info(file.to_str().unwrap()).unwrap();
+        assert_eq!(name, "hello.txt");
+        assert_eq!(path, file);
+        assert_eq!(size, 5);
+
+        let err = outgoing_file_info(dir.to_str().unwrap()).unwrap_err();
+        assert_eq!(err, "只能传输普通文件");
+
+        let err = outgoing_file_info(dir.join("missing.bin").to_str().unwrap()).unwrap_err();
+        assert!(err.contains("读取待传输文件信息失败"), "got: {}", err);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

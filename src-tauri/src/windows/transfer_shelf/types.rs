@@ -133,3 +133,92 @@ fn normalize_shell_path(path: &str) -> String {
 fn normalize_shell_path(path: &str) -> String {
     path.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_temp_path() -> std::path::PathBuf {
+        let seq = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "qc_shelf_types_test_{}_{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
+    }
+
+    // ---- WR-27: label_for ----
+    #[test]
+    fn label_for_prefixes_id_with_shelf_marker() {
+        assert_eq!(label_for("42"), "transfer-shelf-42");
+        assert_eq!(label_for(""), "transfer-shelf-");
+        assert_eq!(label_for("a b"), "transfer-shelf-a b");
+    }
+
+    // ---- WR-28: normalize_shell_path ----
+    #[cfg(windows)]
+    #[test]
+    fn normalize_shell_path_strips_win32_extended_prefixes() {
+        assert_eq!(normalize_shell_path(r"\\?\UNC\server\share"), r"\\server\share");
+        assert_eq!(normalize_shell_path(r"\\?\C:\dir\file.txt"), r"C:\dir\file.txt");
+        assert_eq!(normalize_shell_path(r"C:\plain.txt"), r"C:\plain.txt");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn normalize_shell_path_is_identity_on_non_windows() {
+        assert_eq!(normalize_shell_path(r"\\?\UNC\server\share"), r"\\?\UNC\server\share");
+        assert_eq!(normalize_shell_path(r"C:\foo"), r"C:\foo");
+    }
+
+    // ---- WR-29: describe_path ----
+    #[test]
+    fn describe_path_reports_existing_file_metadata() {
+        let dir = unique_temp_path();
+        let file = dir.join("doc.txt");
+        std::fs::write(&file, b"abc").expect("写临时文件");
+        let info = describe_path(file.to_str().unwrap());
+        assert!(info.exists);
+        assert!(!info.is_dir);
+        assert_eq!(info.size, 3, "size = 文件字节数");
+        assert_eq!(info.name, "doc.txt");
+        assert_eq!(info.path, file.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn describe_path_reports_missing_file_with_lexical_name() {
+        let path = "/nonexistent-qc-xyz/abc.txt";
+        let info = describe_path(path);
+        assert!(!info.exists);
+        assert!(!info.is_dir);
+        assert_eq!(info.size, 0, "缺失文件 size=0");
+        assert_eq!(info.name, "abc.txt", "file_name 是纯词法结果");
+        assert_eq!(info.path, path);
+    }
+
+    #[test]
+    fn describe_path_falls_back_to_full_path_when_no_file_name() {
+        let path = "/nonexistent-qc-xyz/..";
+        let info = describe_path(path);
+        assert!(!info.exists);
+        assert_eq!(info.name, path, "无 file_name 时回退为整个路径");
+    }
+
+    #[test]
+    fn describe_path_reports_directory() {
+        let dir = unique_temp_path();
+        let info = describe_path(dir.to_str().unwrap());
+        assert!(info.exists);
+        assert!(info.is_dir);
+        assert_eq!(info.name, dir.file_name().unwrap().to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+

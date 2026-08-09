@@ -22,3 +22,15 @@ pub fn get_text_scale_factor() -> f64 {
 pub fn get_system_text_scale() -> f64 {
     get_text_scale_factor()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn text_scale_factor_is_one_on_non_windows() {
+        assert_eq!(get_text_scale_factor(), 1.0);
+        assert_eq!(get_system_text_scale(), 1.0);
+    }
+}

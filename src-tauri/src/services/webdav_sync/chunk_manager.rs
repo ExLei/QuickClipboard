@@ -24,3 +24,17 @@ pub async fn save_chunk(
 ) -> Result<(), String> {
     client.put_json(&chunk_path(collection, chunk), data).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::chunk_path;
+    use crate::services::webdav_sync::types::SyncCollection;
+
+    #[test]
+    fn chunk_path_layout_is_stable() {
+        assert_eq!(chunk_path(SyncCollection::History, 0), "history/chunks/chunk_000.json");
+        assert_eq!(chunk_path(SyncCollection::History, 12), "history/chunks/chunk_012.json");
+        assert_eq!(chunk_path(SyncCollection::Favorites, 0), "favorites/chunks/chunk_000.json");
+        assert_eq!(chunk_path(SyncCollection::Favorites, 500), "favorites/chunks/chunk_500.json");
+    }
+}

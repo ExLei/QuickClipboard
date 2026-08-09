@@ -1037,3 +1037,67 @@ pub fn update_favorite(
     
     get_favorite_by_id(&id)?.ok_or_else(|| format!("更新后无法获取收藏项: {}", id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::database::connection::test_support::{TestDb, TEST_ENV_LOCK};
+    use crate::services::database::get_clipboard_data_items;
+
+    // b_favorite_dedup
+    #[test]
+    fn favorite_add_copies_fields_and_raw_formats_then_dedupes() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id = db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, char_count, created_at, updated_at) VALUES ('abc', 'text', 1, 'u1', 0, 3, 1000, 1000)",
+            &[],
+        );
+        db.exec(
+            "INSERT INTO clipboard_data (target_kind, target_id, format_name, raw_data, is_primary, format_order, created_at, updated_at) VALUES ('clipboard', ?1, 'CF_UNICODETEXT', x'616263', 1, 0, 1000, 1000)",
+            &[&id.to_string()],
+        );
+        // 预置收藏墓碑（添加收藏时应清除）
+        db.exec(
+            "INSERT INTO sync_tombstones (collection, item_id, source_device_id, deleted_at, created_at) VALUES ('favorites', 'u1', 'dev', 9999999999, 9999999999)",
+            &[],
+        );
+
+        let fav = add_clipboard_to_favorites(id, None).expect("添加收藏应成功");
+        assert_eq!(fav.id, "u1", "收藏 id = 剪贴板 uuid");
+        assert_eq!(fav.group_name, "全部", "默认分组");
+        assert_eq!(fav.title, "", "空标题");
+        assert_eq!(fav.content, "abc");
+        assert_eq!(fav.content_type, "text");
+        assert_eq!(fav.char_count, Some(3));
+        assert_eq!(fav.paste_count, 0);
+
+        // raw 格式复制为 target_kind='favorite'
+        let fav_formats = crate::services::database::clipboard::get_clipboard_data_items("favorite", "u1").expect("读取收藏 raw");
+        assert_eq!(fav_formats.len(), 1);
+        assert_eq!(fav_formats[0].format_name, "CF_UNICODETEXT");
+        assert_eq!(fav_formats[0].raw_data, b"abc");
+        assert!(fav_formats[0].is_primary);
+
+        // 收藏墓碑被清除
+        assert_eq!(db.count("sync_tombstones"), 0, "添加收藏清除收藏墓碑");
+
+        // 第二次调用：返回同一个收藏，不插入、不报错
+        let again = add_clipboard_to_favorites(id, None).expect("重复添加不报错");
+        assert_eq!(again.id, "u1");
+        assert_eq!(again.updated_at, fav.updated_at, "重复调用不更新");
+        assert_eq!(db.count("favorites"), 1);
+    }
+
+    #[test]
+    fn favorite_add_respects_requested_group() {
+        let _guard = TEST_ENV_LOCK.lock();
+        let db = TestDb::new();
+        let id = db.exec(
+            "INSERT INTO clipboard (content, content_type, item_order, uuid, is_remote, char_count, created_at, updated_at) VALUES ('abc', 'text', 1, 'u1', 0, 3, 1000, 1000)",
+            &[],
+        );
+        let fav = add_clipboard_to_favorites(id, Some("work".to_string())).expect("添加收藏应成功");
+        assert_eq!(fav.group_name, "work");
+    }
+}

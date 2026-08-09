@@ -451,3 +451,39 @@ fn encode_path_segment(raw: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lan_unauthorized_constant_is_exact() {
+        assert_eq!(LAN_UNAUTHORIZED, "局域网设备未授权（配对已失效）");
+    }
+
+    #[test]
+    fn normalize_base_url_adds_http_scheme_and_trims() {
+        assert_eq!(normalize_base_url("192.168.1.5:35691").unwrap(), "http://192.168.1.5:35691");
+        assert_eq!(normalize_base_url("  http://example.com/ ").unwrap(), "http://example.com");
+        assert_eq!(normalize_base_url("https://example.com/dav/").unwrap(), "https://example.com/dav");
+        assert_eq!(normalize_base_url("https://x").unwrap(), "https://x");
+        assert_eq!(normalize_base_url("").unwrap_err(), "局域网设备地址不能为空");
+        assert_eq!(normalize_base_url("   ").unwrap_err(), "局域网设备地址不能为空");
+    }
+
+    #[test]
+    fn encode_path_segment_percent_encodes_non_unreserved() {
+        assert_eq!(encode_path_segment("a b/c"), "a%20b%2Fc");
+        assert_eq!(encode_path_segment("A-Z0-9-_."), "A-Z0-9-_.");
+        assert_eq!(encode_path_segment("中文"), "%E4%B8%AD%E6%96%87");
+    }
+
+    #[test]
+    fn authorization_header_is_bearer_token() {
+        let config = LanHttpClientConfig {
+            base_url: "http://x".to_string(),
+            peer_token: "tok123".to_string(),
+        };
+        assert_eq!(config.authorization_header(), "Bearer tok123");
+    }
+}

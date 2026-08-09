@@ -57,6 +57,15 @@ pub struct WebdavCryptoContext {
     key: Arc<MasterKey>,
 }
 
+impl std::fmt::Debug for WebdavCryptoContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 不打印密钥内容
+        f.debug_struct("WebdavCryptoContext")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
 struct MasterKey {
     bytes: [u8; KEY_LEN],
 }
@@ -466,8 +475,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_cached_keys, context_for_config, create_config};
+    use super::{
+        cache_config, cache_key, cached_config, clear_cached_keys, context_for_config, create_config,
+        file_frame_aad, validate_config, CIPHER_NAME, DATA_FORMAT, FILE_FRAME_AAD_PREFIX, FILE_MAGIC,
+        WebdavCryptoContext,
+    };
+    use base64::{engine::general_purpose, Engine as _};
+    use sha2::{Digest, Sha256};
     use tokio::io::AsyncReadExt;
+
+    fn test_context() -> WebdavCryptoContext {
+        let config = create_config();
+        context_for_config("test", &config, "secret").unwrap()
+    }
 
     #[test]
     fn encrypts_and_decrypts_webdav_payload() {
@@ -488,6 +508,345 @@ mod tests {
         let encrypted = context.encrypt_bytes("history/index.json", b"hello").unwrap();
         let result = context.decrypt_bytes("favorites/index.json", &encrypted);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_config_has_expected_invariants() {
+        let config = create_config();
+        assert_eq!(config.format, "qc-e2ee-config-v1");
+        assert_eq!(config.kdf.name, "argon2id");
+        assert_eq!(config.kdf.memory_kib, 64 * 1024);
+        assert_eq!(config.kdf.iterations, 3);
+        assert_eq!(config.kdf.parallelism, 1);
+        // 16 random bytes -> 24 base64 chars
+        assert_eq!(config.kdf.salt.len(), 24);
+        let salt = general_purpose::STANDARD
+            .decode(&config.kdf.salt)
+            .expect("salt must be valid base64");
+        assert_eq!(salt.len(), 16);
+        // 每次创建随机 salt，两次创建互不相同
+        let other = create_config();
+        assert_ne!(config.kdf.salt, other.kdf.salt);
+    }
+
+    #[test]
+    fn context_rejects_foreign_config_format() {
+        let mut config = create_config();
+        config.format = "other-format".to_string();
+        let err = context_for_config("test", &config, "secret").unwrap_err();
+        assert!(err.contains("WebDAV 云端加密配置格式不兼容"), "got: {}", err);
+    }
+
+    #[test]
+    fn context_rejects_unsupported_kdf() {
+        let mut config = create_config();
+        config.kdf.name = "scrypt".to_string();
+        let err = context_for_config("test", &config, "secret").unwrap_err();
+        assert!(err.contains("WebDAV 云端加密 KDF 不受支持"), "got: {}", err);
+    }
+
+    #[test]
+    fn context_rejects_zero_kdf_parameters() {
+        let mut config = create_config();
+        config.kdf.memory_kib = 0;
+        let err = context_for_config("test", &config, "secret").unwrap_err();
+        assert!(err.contains("WebDAV 云端加密 KDF 参数无效"), "got: {}", err);
+
+        let mut config = create_config();
+        config.kdf.iterations = 0;
+        let err = context_for_config("test", &config, "secret").unwrap_err();
+        assert!(err.contains("WebDAV 云端加密 KDF 参数无效"), "got: {}", err);
+
+        let mut config = create_config();
+        config.kdf.parallelism = 0;
+        let err = context_for_config("test", &config, "secret").unwrap_err();
+        assert!(err.contains("WebDAV 云端加密 KDF 参数无效"), "got: {}", err);
+    }
+
+    #[test]
+    fn context_rejects_empty_password() {
+        let config = create_config();
+        let err = context_for_config("test", &config, "").unwrap_err();
+        assert_eq!(err, "请先设置 WebDAV 云端加密密码");
+    }
+
+    #[test]
+    fn validate_config_accepts_created_config() {
+        let config = create_config();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn key_derivation_is_deterministic_across_contexts() {
+        clear_cached_keys();
+        let config = create_config();
+        let first = context_for_config("test", &config, "secret").unwrap();
+        let second = context_for_config("test", &config, "secret").unwrap();
+        let encrypted = first.encrypt_bytes("history/index.json", b"payload").unwrap();
+        // 同配置同密码的第二个上下文必须能解开
+        assert_eq!(
+            second.decrypt_bytes("history/index.json", &encrypted).unwrap(),
+            b"payload"
+        );
+    }
+
+    #[test]
+    fn wrong_password_cannot_decrypt() {
+        clear_cached_keys();
+        let config = create_config();
+        let context = context_for_config("test", &config, "secret").unwrap();
+        let encrypted = context.encrypt_bytes("history/index.json", b"payload").unwrap();
+        let wrong = context_for_config("test", &config, "wrong").unwrap();
+        let err = wrong.decrypt_bytes("history/index.json", &encrypted).unwrap_err();
+        assert!(err.contains("WebDAV 数据解密失败，请检查云端加密密码"), "got: {}", err);
+    }
+
+    #[test]
+    fn cache_config_roundtrip_and_clear() {
+        clear_cached_keys();
+        let config = create_config();
+        assert!(cached_config("scope-a").is_none());
+        cache_config("scope-a", &config);
+        let cached = cached_config("scope-a").expect("cached config must be readable");
+        assert_eq!(cached.kdf.salt, config.kdf.salt);
+        assert!(cached_config("scope-b").is_none());
+        clear_cached_keys();
+        assert!(cached_config("scope-a").is_none());
+    }
+
+    #[test]
+    fn cache_key_is_deterministic_and_sensitive_to_inputs() {
+        let config = create_config();
+        let first = cache_key("scope", &config, "pw");
+        let again = cache_key("scope", &config, "pw");
+        assert_eq!(first, again);
+        assert_ne!(first, cache_key("scope", &config, "other"));
+        assert_ne!(first, cache_key("other-scope", &config, "pw"));
+    }
+
+    #[test]
+    fn encrypted_file_size_math_is_exact() {
+        let context = test_context();
+        // header 24 字节 + 明文 + 分片数 * (帧头 28 + tag 16)
+        assert_eq!(context.encrypted_file_size(0, 1024).unwrap(), 24);
+        assert_eq!(context.encrypted_file_size(1, 1024).unwrap(), 24 + 1 + 44);
+        assert_eq!(context.encrypted_file_size(1024, 1024).unwrap(), 24 + 1024 + 44);
+        assert_eq!(context.encrypted_file_size(1025, 1024).unwrap(), 24 + 1025 + 88);
+        assert_eq!(context.encrypted_file_size(10000, 1024).unwrap(), 24 + 10000 + 440);
+        assert_eq!(context.encrypted_file_size(64 * 1024 * 1024, 64 * 1024 * 1024).unwrap(), 24 + 64 * 1024 * 1024 + 44);
+    }
+
+    #[test]
+    fn encrypted_file_size_rejects_invalid_chunk_sizes() {
+        let context = test_context();
+        let err = context.encrypted_file_size(100, 0).unwrap_err();
+        assert!(err.contains("云端文件分片大小无效"), "got: {}", err);
+        let err = context.encrypted_file_size(100, 64 * 1024 * 1024 + 1).unwrap_err();
+        assert!(err.contains("云端文件分片大小无效"), "got: {}", err);
+    }
+
+    #[test]
+    fn encrypted_file_size_overflow_errors() {
+        let context = test_context();
+        // 明文 + chunk-1 本身溢出 -> 云端文件过大
+        let err = context.encrypted_file_size(u64::MAX, 2).unwrap_err();
+        assert_eq!(err, "云端文件过大");
+        // 帧数 * 帧开销溢出 -> 云端加密文件大小溢出
+        let err = context.encrypted_file_size(u64::MAX - 1, 2).unwrap_err();
+        assert!(err.contains("云端加密文件大小溢出"), "got: {}", err);
+    }
+
+    #[test]
+    fn file_frame_aad_layout_is_stable() {
+        // wire 字节字面量：前缀 + 路径 + frame_index(le u64) + plain_len(le u32)
+        assert_eq!(
+            file_frame_aad("cloud_files/objects/x.qcf", 7, 3),
+            b"qc-e2ee-file-frame-v1cloud_files/objects/x.qcf\x07\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00"
+        );
+    }
+
+    #[test]
+    fn bytes_envelope_is_json_with_expected_fields() {
+        let context = test_context();
+        let encrypted = context.encrypt_bytes("history/index.json", b"hello").unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&encrypted).expect("envelope must be JSON");
+        assert_eq!(value["format"], "qc-e2ee-data-v1");
+        assert_eq!(value["cipher"]["name"], "xchacha20poly1305");
+        let nonce = value["cipher"]["nonce"].as_str().expect("nonce missing");
+        assert_eq!(nonce.len(), 32); // base64(24)
+        // 明文 5 字节 + tag 16 字节 = 21 字节 -> base64 28 字符
+        assert_eq!(value["payload"].as_str().expect("payload missing").len(), 28);
+        assert_eq!(general_purpose::STANDARD.decode(value["payload"].as_str().unwrap()).unwrap().len(), 21);
+    }
+
+    #[test]
+    fn bytes_reject_tampered_payload() {
+        let context = test_context();
+        let mut encrypted = context.encrypt_bytes("history/index.json", b"hello").unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&encrypted).unwrap();
+        let mut payload = general_purpose::STANDARD
+            .decode(value["payload"].as_str().unwrap())
+            .unwrap();
+        payload[0] ^= 0x01;
+        value["payload"] = serde_json::Value::String(general_purpose::STANDARD.encode(payload));
+        encrypted = serde_json::to_vec(&value).unwrap();
+        let err = context.decrypt_bytes("history/index.json", &encrypted).unwrap_err();
+        assert!(err.contains("WebDAV 数据解密失败，请检查云端加密密码"), "got: {}", err);
+    }
+
+    #[test]
+    fn bytes_reject_foreign_format_and_cipher() {
+        let context = test_context();
+        let encrypted = context.encrypt_bytes("history/index.json", b"hello").unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&encrypted).unwrap();
+        value["format"] = serde_json::Value::String("other".to_string());
+        let err = context.decrypt_bytes("history/index.json", &serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(err.contains("WebDAV 数据加密格式不兼容"), "got: {}", err);
+
+        let encrypted = context.encrypt_bytes("history/index.json", b"hello").unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&encrypted).unwrap();
+        value["cipher"]["name"] = serde_json::Value::String("aes-gcm".to_string());
+        let err = context.decrypt_bytes("history/index.json", &serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert!(err.contains("WebDAV 数据加密算法不受支持"), "got: {}", err);
+    }
+
+    #[test]
+    fn bytes_reject_bad_nonce_and_non_envelope() {
+        let context = test_context();
+        let value = serde_json::json!({
+            "format": DATA_FORMAT,
+            "cipher": { "name": CIPHER_NAME, "nonce": general_purpose::STANDARD.encode([0u8; 4]) },
+            "payload": general_purpose::STANDARD.encode([0u8; 8]),
+        });
+        let err = context
+            .decrypt_bytes("history/index.json", &serde_json::to_vec(&value).unwrap())
+            .unwrap_err();
+        assert!(err.contains("WebDAV 加密 nonce 长度无效"), "got: {}", err);
+
+        let err = context.decrypt_bytes("history/index.json", b"not json at all").unwrap_err();
+        assert!(err.contains("WebDAV 数据不是 QuickClipboard 加密格式"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_stream_returns_plaintext_sha256() {
+        clear_cached_keys();
+        let context = test_context();
+        let plaintext = (0..10000).map(|value| (value % 251) as u8).collect::<Vec<_>>();
+        let mut expected_hasher = Sha256::new();
+        expected_hasher.update(&plaintext);
+        let expected_sha = hex::encode(expected_hasher.finalize());
+
+        let (encrypted_writer, encrypted_reader) = tokio::io::duplex(4096);
+        let write_context = context.clone();
+        let plain_for_write = plaintext.clone();
+        let write_task = tokio::spawn(async move {
+            let reader = std::io::Cursor::new(plain_for_write);
+            write_context
+                .write_encrypted_file("cloud_files/objects/a.qcf", reader, encrypted_writer, 10000, 1024, None)
+                .await
+        });
+
+        let (decrypted_writer, mut decrypted_reader) = tokio::io::duplex(4096);
+        let read_context = context.clone();
+        let read_task = tokio::spawn(async move {
+            read_context
+                .read_encrypted_file("cloud_files/objects/a.qcf", encrypted_reader, decrypted_writer)
+                .await
+        });
+
+        let mut out = Vec::new();
+        decrypted_reader.read_to_end(&mut out).await.unwrap();
+        let returned_sha = write_task.await.unwrap().unwrap();
+        let read_sha = read_task.await.unwrap().unwrap();
+        assert_eq!(out, plaintext);
+        assert_eq!(returned_sha, expected_sha);
+        assert_eq!(read_sha, expected_sha);
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_stream_rejects_bad_magic() {
+        clear_cached_keys();
+        let context = test_context();
+        let mut bogus = Vec::new();
+        bogus.extend_from_slice(b"BADMAGIC");
+        bogus.extend_from_slice(&1024u64.to_le_bytes());
+        bogus.extend_from_slice(&10u64.to_le_bytes());
+        let mut sink = Vec::new();
+        let err = context
+            .read_encrypted_file("cloud_files/objects/a.qcf", std::io::Cursor::new(bogus), &mut sink)
+            .await
+            .unwrap_err();
+        assert!(err.contains("云端文件加密格式不兼容"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_stream_rejects_plain_size_mismatch() {
+        clear_cached_keys();
+        let context = test_context();
+        let plaintext = vec![7u8; 10000];
+        // 声明 5000 字节但实际读出 10000 -> 中途报错
+        let mut sink = Vec::new();
+        let write_context = context.clone();
+        let result = write_context
+            .write_encrypted_file("cloud_files/objects/a.qcf", std::io::Cursor::new(plaintext.clone()), &mut sink, 5000, 1024, None)
+            .await;
+        let err = result.unwrap_err();
+        assert!(err.contains("待上传文件大小发生变化"), "got: {}", err);
+        // 声明 10000 但实际 5000 -> 收尾校验失败
+        let mut sink = Vec::new();
+        let write_context = context.clone();
+        let result = write_context
+            .write_encrypted_file("cloud_files/objects/a.qcf", std::io::Cursor::new(plaintext[..5000].to_vec()), &mut sink, 10000, 1024, None)
+            .await;
+        let err = result.unwrap_err();
+        assert!(err.contains("待上传文件大小发生变化"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_stream_rejects_invalid_frame_length() {
+        clear_cached_keys();
+        let context = test_context();
+        // 手工构造：合法头 + 帧长度 0（明文声明 10 字节但没有任何有效帧）
+        let mut bogus = Vec::new();
+        bogus.extend_from_slice(FILE_MAGIC);
+        bogus.extend_from_slice(&1024u64.to_le_bytes());
+        bogus.extend_from_slice(&10u64.to_le_bytes());
+        bogus.extend_from_slice(&0u32.to_le_bytes()); // plain_len == 0 非法
+        let mut sink = Vec::new();
+        let err = context
+            .read_encrypted_file("cloud_files/objects/a.qcf", std::io::Cursor::new(bogus), &mut sink)
+            .await
+            .unwrap_err();
+        assert!(err.contains("云端加密文件分片长度无效"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_stream_rejects_tampered_frame() {
+        clear_cached_keys();
+        let context = test_context();
+        let plaintext = (0..10000).map(|value| (value % 251) as u8).collect::<Vec<_>>();
+        let mut encrypted = Vec::new();
+        let write_context = context.clone();
+        let plain_for_write = plaintext.clone();
+        write_context
+            .write_encrypted_file(
+                "cloud_files/objects/a.qcf",
+                std::io::Cursor::new(plain_for_write),
+                &mut encrypted,
+                10000,
+                1024,
+                None,
+            )
+            .await
+            .unwrap();
+        // 第一帧密文从偏移 52 开始（头 24 + 帧长 4 + nonce 24），翻转其中一字节
+        encrypted[52 + 100] ^= 0x01;
+        let mut sink = Vec::new();
+        let err = context
+            .read_encrypted_file("cloud_files/objects/a.qcf", std::io::Cursor::new(encrypted), &mut sink)
+            .await
+            .unwrap_err();
+        assert!(err.contains("WebDAV 云端文件解密失败，请检查云端加密密码"), "got: {}", err);
     }
 
     #[tokio::test]

@@ -87,3 +87,39 @@ pub fn keys() -> Vec<String> {
     
     store.keys().into_iter().map(|s| s.to_string()).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // init() 只会在 Tauri 应用 setup() 中调用（lib.rs），单元测试进程内永远不会执行，
+    // 因此以下断言刻画“未初始化”状态下的确定性契约。
+
+    #[test]
+    fn uninitialized_store_get_returns_none() {
+        assert_eq!(get::<u64>("qc.test.missing"), None);
+        assert_eq!(get::<bool>("qc.test.missing"), None);
+    }
+
+    #[test]
+    fn uninitialized_store_set_returns_init_error() {
+        assert_eq!(
+            set("qc.test.key", &42u64),
+            Err("AppHandle 未初始化".to_string())
+        );
+    }
+
+    #[test]
+    fn uninitialized_store_delete_returns_init_error() {
+        assert_eq!(
+            delete("qc.test.key"),
+            Err("AppHandle 未初始化".to_string())
+        );
+    }
+
+    #[test]
+    fn uninitialized_store_has_is_false_and_keys_empty() {
+        assert!(!has("qc.test.key"));
+        assert!(keys().is_empty());
+    }
+}

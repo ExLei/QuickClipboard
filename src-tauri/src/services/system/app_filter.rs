@@ -521,4 +521,94 @@ mod tests {
             "*code.exe",
         ));
     }
+
+    #[test]
+    fn filter_rule_empty_or_whitespace_never_matches() {
+        assert!(!matches_filter_rule_text("Chrome.exe", "", "", ""));
+        assert!(!matches_filter_rule_text("Chrome.exe", "", "", "   "));
+    }
+
+    #[test]
+    fn filter_rule_matches_window_title_and_path() {
+        assert!(matches_filter_rule_text(
+            "Code.exe",
+            "Visual Studio Code",
+            "",
+            "visual studio",
+        ));
+        assert!(matches_filter_rule_text(
+            "Code.exe",
+            "",
+            r"C:\Users\test\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+            r"appdata\local",
+        ));
+        assert!(!matches_filter_rule_text(
+            "Code.exe",
+            "Visual Studio Code",
+            "",
+            "chrome",
+        ));
+    }
+
+    #[test]
+    fn filter_rule_wildcard_question_mark_matches_single_char() {
+        assert!(matches_filter_rule_text("Code.exe", "", "", "Cod?.exe"));
+        assert!(!matches_filter_rule_text("Code.exe", "", "", "Cod??.exe"));
+    }
+
+    #[test]
+    fn wildcard_match_semantics() {
+        assert!(wildcard_match("*", ""));
+        assert!(wildcard_match("*", "anything"));
+        assert!(wildcard_match("a*c", "abc"));
+        assert!(wildcard_match("a*c", "ac"));
+        assert!(wildcard_match("a?c", "abc"));
+        assert!(!wildcard_match("a?c", "ac"));
+        assert!(!wildcard_match("a?c", "abbc"));
+        assert!(wildcard_match("*code.exe", "Code.exe"));
+        assert!(wildcard_match("*.exe", "chrome.exe"));
+        assert!(wildcard_match("*a*b*", "xxaybzz"));
+        assert!(!wildcard_match("", "x"));
+        assert!(!wildcard_match("?", ""));
+        assert!(wildcard_match("EXACT", "exact"));
+        assert!(!wildcard_match("exact", "exactx"));
+        assert!(wildcard_match("a**c", "abbbc"));
+    }
+
+    #[test]
+    fn matches_filter_rule_uses_source_fields() {
+        let source = ClipboardSourceInfo {
+            process_name: "Chrome.exe".to_string(),
+            process_path: r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string(),
+            window_title: "GitHub - 谷歌浏览器".to_string(),
+            source_type: ClipboardSourceType::ClipboardOwner,
+        };
+        assert!(matches_filter_rule(&source, "chrome.exe"));
+        assert!(matches_filter_rule(&source, "GitHub"));
+        assert!(matches_filter_rule(&source, "*chrome*"));
+        assert!(!matches_filter_rule(&source, "firefox"));
+        assert!(!matches_filter_rule(&source, ""));
+    }
+
+    #[test]
+    fn current_app_allowed_when_filter_disabled() {
+        assert!(is_current_app_allowed(false, &[]));
+        assert!(is_current_app_allowed(false, &["chrome.exe".to_string()]));
+    }
+
+    #[test]
+    fn current_app_allowed_with_empty_or_unrelated_blocklist() {
+        assert!(is_current_app_allowed(true, &[]));
+        assert!(is_current_app_allowed(true, &["definitely-not-a-real-app-xyz".to_string()]));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn global_disable_is_inert_without_foreground_info() {
+        // 非 Windows 平台 get_foreground_app_info() 恒为 None → 永不全局禁用
+        assert!(!is_front_app_globally_disabled(false, &[], "global_disable"));
+        assert!(!is_front_app_globally_disabled(true, &[], "global_disable"));
+        assert!(!is_front_app_globally_disabled(true, &["chrome.exe".to_string()], "global_disable"));
+        assert!(!is_front_app_globally_disabled(true, &[], "clipboard_only"));
+    }
 }
