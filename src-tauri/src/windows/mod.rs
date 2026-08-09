@@ -11,6 +11,3 @@ pub mod preview_window;
 pub mod transfer_shelf;
 pub mod receive_box;
 pub mod drop_proxy;
-
-#[cfg(feature = "gpu-image-viewer")]
-pub mod native_pin_window;

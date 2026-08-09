@@ -238,12 +238,6 @@
   "search": {
     "placeholder": "搜索剪贴板内容..."
   },
-  "screenshot": {
-    "take": "截图",
-    "edit": "编辑",
-    "save": "保存",
-    "cancel": "取消"
-  },
   "settings": {
     "title": "设置",
     "searchPlaceholder": "搜索设置项...",
@@ -273,7 +267,6 @@
       "aiConfig": "AI配置",
       "translation": "翻译",
       "quickpaste": "便捷粘贴",
-      "screenshot": "截屏设置",
       "sound": "音效设置",
       "appFilter": "应用过滤",
       "dataManagement": "数据管理",
@@ -480,7 +473,7 @@
       "autoLowMemoryIdleMinutes": "窗口空闲时长",
       "autoLowMemoryIdleMinutesDesc": "超过该时长仍未与任意窗口交互时，自动进入低占用模式",
       "autoExitLowMemoryMode": "自动退出低占用模式",
-      "autoExitLowMemoryModeDesc": "低占用模式下触发剪贴板显示或截屏时自动退出低占用模式",
+      "autoExitLowMemoryModeDesc": "低占用模式下触发剪贴板显示时自动退出低占用模式",
       "memoryOptimization": "内存优化",
       "memoryOptimizationDesc": "开启此项后，窗口在后台时可大幅降低内存占用，但如果遇到卡顿问题请关闭此项",
       "showTrayIcon": "显示托盘图标",
@@ -556,7 +549,6 @@
     "shortcuts": {
       "tabs": {
         "globalHotkey": "全局热键",
-        "screenshotHotkey": "截图热键",
         "navigation": "界面导航",
         "quickActions": "快捷操作",
         "pinOps": "贴图操作"
@@ -578,40 +570,6 @@
       "webdavPushDesc": "快速将本机剪贴板数据推送到 WebDAV",
       "webdavPull": "从 WebDAV 拉取",
       "webdavPullDesc": "快速从 WebDAV 拉取云端数据",
-      "screenshotTitle": "截屏快捷键",
-      "screenshotSectionDesc": "截屏相关的快捷键设置",
-      "screenshot": "普通截屏",
-      "screenshotDesc": "触发截屏功能，显示工具栏进行编辑",
-      "screenshotQuickSave": "快速截屏复制",
-      "screenshotQuickSaveDesc": "选区完成后直接复制到剪贴板",
-      "screenshotQuickPin": "快速截屏贴图",
-      "screenshotQuickPinDesc": "选区完成后直接创建贴图",
-      "screenshotQuickOcr": "快速截屏OCR",
-      "screenshotQuickOcrDesc": "选区完成后直接OCR识别并复制文字",
-      "screenshotInternalTitle": "截屏内快捷键",
-      "screenshotInternalDesc": "截屏窗口内的操作快捷键",
-      "screenshotToolSwitch": "切换工具",
-      "screenshotToolSwitchDesc": "数字键1-9切换对应的绘图工具",
-      "screenshotUndo": "撤销",
-      "screenshotUndoDesc": "撤销上一步操作",
-      "screenshotRedo": "重做",
-      "screenshotRedoDesc": "重做已撤销的操作",
-      "screenshotDelete": "删除选中",
-      "screenshotDeleteDesc": "删除当前选中的对象",
-      "screenshotClearCanvas": "清空画布",
-      "screenshotClearCanvasDesc": "清空所有绘制内容",
-      "screenshotCancel": "取消",
-      "screenshotCancelDesc": "取消当前工具或退出截屏",
-      "screenshotSave": "保存截图",
-      "screenshotSaveDesc": "保存截图到文件",
-      "screenshotConfirm": "确认截图",
-      "screenshotConfirmDesc": "确认并复制截图到剪贴板",
-      "screenshotPinAction": "贴图",
-      "screenshotPinActionDesc": "将截图贴到屏幕上",
-      "screenshotSelectAll": "全选对象",
-      "screenshotSelectAllDesc": "选择画布上的所有对象",
-      "screenshotRadialPicker": "圆盘工具选择",
-      "screenshotRadialPickerDesc": "按住显示圆盘工具选择器，松开选择工具",
       "toggleClipboardMonitor": "切换剪贴板监听",
       "toggleClipboardMonitorDesc": "快速启用或禁用剪贴板监听功能",
       "togglePasteWithFormat": "开/关格式粘贴",
@@ -728,10 +686,6 @@
         "rightClick": "右键",
         "leftHold": "按住左键",
         "scroll": "滚轮"
-      },
-      "screenshotKeys": {
-        "doubleClick": "双击左键",
-        "rightClick": "右键"
       }
     },
     "clipboard": {
@@ -893,34 +847,6 @@
         "emptyClipboard": "暂无剪贴板历史",
         "emptyFavorites": "该分组暂无收藏"
       }
-    },
-    "screenshot": {
-      "title": "截屏设置",
-      "description": "配置截屏功能和行为",
-      "enabled": "启用截屏功能",
-      "enabledDesc": "开启或关闭截屏功能",
-      "elementDetection": "元素检测",
-      "elementDetectionDesc": "截屏时自动检测和高亮显示元素",
-      "detectionNone": "不检测",
-      "detectionWindow": "仅窗口",
-      "detectionAll": "窗口和控件",
-      "magnifier": "放大镜",
-      "magnifierDesc": "截屏时显示放大镜辅助",
-      "hints": "提示信息",
-      "hintsDesc": "截屏时显示操作提示",
-      "colorIncludeFormat": "颜色包含格式",
-      "colorIncludeFormatDesc": "取色时同时显示RGB、HEX等多种格式",
-      "lifecycleMode": "截屏窗口释放策略",
-      "lifecycleModeDesc": "控制截屏结束后截图窗口的处理方式，用于平衡启动速度与资源占用。",
-      "lifecycleModeQuick": "快速模式",
-      "lifecycleModeQuickDesc": "结束截屏后仅隐藏窗口并进行基础清理，下一次启动速度最快（可能会有少量后台资源占用）。",
-      "lifecycleModeDispose": "释放模式",
-      "lifecycleModeDisposeDesc": "结束截屏后立即释放窗口资源，后台几乎不占用 CPU 或内存（下次启动会稍慢）。",
-      "lifecycleModeAuto": "智能模式",
-      "lifecycleModeAutoDesc": "结束截屏后暂时保留窗口，若在设定时间内未再次截屏，将自动释放资源。",
-      "autoDisposeMinutes": "自动释放时间",
-      "autoDisposeMinutesDesc": "智能模式下：截屏结束后若在此时间内未再次使用截屏功能，将自动释放窗口资源。",
-      "minutes": "分钟"
     },
     "sound": {
       "title": "音效设置",
@@ -1162,7 +1088,6 @@
     "reset": "重置",
     "pin": "固定窗口",
     "settings": "设置",
-    "screenshot": "截屏",
     "oneTimePaste": "一次性粘贴",
     "aiTranslation": "AI翻译",
     "formatToggle": "格式粘贴",
@@ -1172,7 +1097,6 @@
       "webdav": "WebDAV 同步",
       "newTransferShelf": "新建文件盒",
       "openReceiveBox": "打开收件盒",
-      "screenshot": "截屏",
       "contentPreview": "内容预览",
       "globalPaste": "全局粘贴",
       "settings": "设置"

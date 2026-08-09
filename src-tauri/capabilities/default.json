@@ -44,7 +44,6 @@
           "url": "https://api.github.com/**"
         }
       ]
-    },
-    "screenshot-suite:default"
+    }
   ]
 }

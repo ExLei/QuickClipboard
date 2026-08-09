@@ -90,11 +90,6 @@ export async function createContextMenu(window, states, onThumbnailToggle) {
       }),
       createSeparator(),
       createMenuItem({
-        id: "edit",
-        label: "编辑贴图",
-        icon: "ti ti-edit",
-      }),
-      createMenuItem({
         id: "copy",
         label: "复制到剪贴板",
         icon: "ti ti-copy",
@@ -229,28 +224,6 @@ async function handleMenuAction(
         const opacitySettings = loadSettings();
         opacitySettings.opacity = opacity;
         saveSettings(opacitySettings);
-      }
-      break;
-    case "edit":
-      {
-        const editImg = document.getElementById("pinImage");
-        const imageClip = document.querySelector(".image-clip");
-        if (editImg && imageClip) {
-          const rect = imageClip.getBoundingClientRect();
-          const dpr = globalThis.devicePixelRatio || 1;
-          const imgOffsetXPhysical = Math.round(rect.left * dpr);
-          const imgOffsetYPhysical = Math.round(rect.top * dpr);
-          const imgWidthPhysical = Math.round(rect.width * dpr);
-          const imgHeightPhysical = Math.round(rect.height * dpr);
-          await invoke("start_pin_edit_mode", {
-            imgOffsetXPhysical: imgOffsetXPhysical,
-            imgOffsetYPhysical: imgOffsetYPhysical,
-            imgWidthPhysical: imgWidthPhysical,
-            imgHeightPhysical: imgHeightPhysical,
-          });
-        } else {
-          await invoke("start_pin_edit_mode", {});
-        }
       }
       break;
     case "copy":

@@ -122,61 +122,6 @@ function ShortcutsSection({ settings, onSettingChange, activeTab }) {
           </SettingsSection>
         );
 
-      case 'screenshotHotkey':
-        return (
-          <>
-            <SettingsSection title={t('settings.shortcuts.screenshotTitle')} description={t('settings.shortcuts.screenshotSectionDesc')}>
-              <SettingItem label={t('settings.shortcuts.screenshot')} description={t('settings.shortcuts.screenshotDesc')}>
-                <ShortcutInput value={settings.screenshotShortcut} onChange={value => handleShortcutChange('screenshotShortcut', value)} onReset={() => handleShortcutChange('screenshotShortcut', 'Ctrl+Shift+A')} hasError={hasErrorStatus('screenshotShortcut', 'screenshot')} errorMessage={getErrorMessage('screenshotShortcut', 'screenshot')} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotQuickSave')} description={t('settings.shortcuts.screenshotQuickSaveDesc')}>
-                <ShortcutInput value={settings.screenshotQuickSaveShortcut} onChange={value => handleShortcutChange('screenshotQuickSaveShortcut', value)} onReset={() => handleShortcutChange('screenshotQuickSaveShortcut', '')} hasError={hasErrorStatus('screenshotQuickSaveShortcut', 'screenshot_quick_save')} errorMessage={getErrorMessage('screenshotQuickSaveShortcut', 'screenshot_quick_save')} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotQuickPin')} description={t('settings.shortcuts.screenshotQuickPinDesc')}>
-                <ShortcutInput value={settings.screenshotQuickPinShortcut} onChange={value => handleShortcutChange('screenshotQuickPinShortcut', value)} onReset={() => handleShortcutChange('screenshotQuickPinShortcut', '')} hasError={hasErrorStatus('screenshotQuickPinShortcut', 'screenshot_quick_pin')} errorMessage={getErrorMessage('screenshotQuickPinShortcut', 'screenshot_quick_pin')} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotQuickOcr')} description={t('settings.shortcuts.screenshotQuickOcrDesc')}>
-                <ShortcutInput value={settings.screenshotQuickOcrShortcut} onChange={value => handleShortcutChange('screenshotQuickOcrShortcut', value)} onReset={() => handleShortcutChange('screenshotQuickOcrShortcut', '')} hasError={hasErrorStatus('screenshotQuickOcrShortcut', 'screenshot_quick_ocr')} errorMessage={getErrorMessage('screenshotQuickOcrShortcut', 'screenshot_quick_ocr')} />
-              </SettingItem>
-            </SettingsSection>
-            <SettingsSection title={t('settings.shortcuts.screenshotInternalTitle')} description={t('settings.shortcuts.screenshotInternalDesc')}>
-              <SettingItem label={t('settings.shortcuts.screenshotToolSwitch')} description={t('settings.shortcuts.screenshotToolSwitchDesc')}>
-                <ReadonlyShortcut keys={['1-9']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotRadialPicker')} description={t('settings.shortcuts.screenshotRadialPickerDesc')}>
-                <ReadonlyShortcut keys={['Tab']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotUndo')} description={t('settings.shortcuts.screenshotUndoDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'Z']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotRedo')} description={t('settings.shortcuts.screenshotRedoDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'Y']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotDelete')} description={t('settings.shortcuts.screenshotDeleteDesc')}>
-                <ReadonlyShortcut keys={['Delete']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotClearCanvas')} description={t('settings.shortcuts.screenshotClearCanvasDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'Shift', 'C']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotSelectAll')} description={t('settings.shortcuts.screenshotSelectAllDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'A']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotConfirm')} description={t('settings.shortcuts.screenshotConfirmDesc')}>
-                <ReadonlyShortcut groups={[['Enter'], [t('settings.shortcuts.screenshotKeys.doubleClick')]]} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotCancel')} description={t('settings.shortcuts.screenshotCancelDesc')}>
-                <ReadonlyShortcut groups={[['Esc'], [t('settings.shortcuts.screenshotKeys.rightClick')]]} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotSave')} description={t('settings.shortcuts.screenshotSaveDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'S']} />
-              </SettingItem>
-              <SettingItem label={t('settings.shortcuts.screenshotPinAction')} description={t('settings.shortcuts.screenshotPinActionDesc')}>
-                <ReadonlyShortcut keys={['Ctrl', 'P']} />
-              </SettingItem>
-            </SettingsSection>
-          </>
-        );
-
       case 'pinOps':
         return (
           <SettingsSection title={t('settings.shortcuts.pinTitle')} description={t('settings.shortcuts.pinDesc')}>

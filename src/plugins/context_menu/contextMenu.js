@@ -129,15 +129,12 @@ class PreviewController {
     menuItem.addEventListener("mouseenter", () => {
       const timer = setTimeout(async () => {
         try {
-          await invoke("show_native_image_preview", {
-            filePath: item.previewImage,
-          });
-        } catch (nativeError) {
-          console.error("原生预览失败，回退到 Tauri WebView 版:", nativeError);
-          invoke("pin_image_from_file", {
+          await invoke("pin_image_from_file", {
             filePath: item.previewImage,
             previewMode: true,
-          }).catch((fallbackError) => { console.error("WebView 预览也失败:", fallbackError); });
+          });
+        } catch (error) {
+          console.error("预览失败:", error);
         }
       }, LAYOUT.previewDelay);
       this.timers.set(menuItem, timer);
@@ -145,7 +142,6 @@ class PreviewController {
 
     menuItem.addEventListener("mouseleave", () => {
       this.clear(menuItem);
-      invoke("close_native_image_preview").catch(() => {});
       invoke("close_image_preview").catch(() => {});
     });
   }

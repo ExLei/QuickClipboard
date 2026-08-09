@@ -635,15 +635,6 @@ mod windows_raw_input {
             return true;
         }
 
-        #[cfg(feature = "screenshot-suite")]
-        {
-            if let Some(app) = input_common::try_get_app_handle() {
-                if let Some(win) = app.get_webview_window("screenshot") {
-                    return win.is_visible().unwrap_or(false);
-                }
-            }
-        }
-
         false
     }
 

@@ -4,8 +4,8 @@
   "version": "../package.json",
   "identifier": "com.quickclipboard.app",
   "build": {
-    "beforeDevCommand": "node scripts/dev-tauri.js",
-    "beforeBuildCommand": "node scripts/build-tauri.js",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1421",
     "frontendDist": "../dist"
   },
@@ -42,7 +42,6 @@
         "quickpaste",
         "community",
         "text-editor",
-        "screenshot",
         "pin-image",
         "input-dialog",
         "context-menu",

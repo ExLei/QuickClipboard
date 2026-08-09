@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use once_cell::sync::OnceCell;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Listener, Manager, WebviewWindow, WebviewWindowBuilder, Size, LogicalSize, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, Size, LogicalSize, PhysicalPosition, PhysicalSize};
 
 static PIN_IMAGE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static PIN_IMAGE_DATA_MAP: OnceCell<Mutex<HashMap<String, PinImageData>>> = OnceCell::new();
@@ -356,103 +356,6 @@ pub fn close_pin_image_window_by_self(window: WebviewWindow) -> Result<(), Strin
     let _ = window.set_size(Size::Logical(LogicalSize::new(1.0, 1.0)));
     window.close().map_err(|e| format!("关闭窗口失败: {}", e))?;
     
-    Ok(())
-}
-
-// 启动贴图编辑模式
-#[tauri::command]
-pub async fn start_pin_edit_mode(
-    app: AppHandle,
-    window: WebviewWindow,
-    img_offset_x_physical: i32,
-    img_offset_y_physical: i32,
-    img_width_physical: u32,
-    img_height_physical: u32,
-) -> Result<(), String> {
-    let (file_path, original_image_path, edit_data) = if let Some(data_map) = PIN_IMAGE_DATA_MAP.get() {
-        let map = data_map.lock().unwrap();
-        if let Some(data) = map.get(window.label()) {
-            (data.file_path.clone(), data.original_image_path.clone(), data.edit_data.clone())
-        } else {
-            return Err("未找到图片数据".to_string());
-        }
-    } else {
-        return Err("未找到图片数据".to_string());
-    };
-
-    let position = window.outer_position()
-        .map_err(|e| format!("获取窗口位置失败: {}", e))?;
-    let inner_size = window.inner_size()
-        .map_err(|e| format!("获取窗口尺寸失败: {}", e))?;
-    let scale_factor = window.scale_factor()
-        .map_err(|e| format!("获取缩放因子失败: {}", e))?;
-    let image_x = position.x + img_offset_x_physical;
-    let image_y = position.y + img_offset_y_physical;
-    let image_physical_width = img_width_physical;
-    let image_physical_height = img_height_physical;
-    
-    let logical_width = (image_physical_width as f64 / scale_factor).round() as u32;
-    let logical_height = (image_physical_height as f64 / scale_factor).round() as u32;
-
-    let window_x = position.x;
-    let window_y = position.y;
-    let window_width = inner_size.width as f64 / scale_factor;
-    let window_height = inner_size.height as f64 / scale_factor;
-
-    let label = window.label().to_string();
-    let window_clone = window.clone();
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let _unlisten = app.once("pin-edit-ready", move |_| {
-        let _ = window_clone.set_size(Size::Logical(LogicalSize::new(1.0, 1.0)));
-        let _ = window_clone.hide();
-        let _ = tx.send(());
-    });
-
-    #[cfg(feature = "screenshot-suite")]
-    {
-        screenshot_suite::start_pin_edit_mode(
-            &app,
-            file_path,
-            image_x,
-            image_y,
-            image_physical_width,
-            image_physical_height,
-            logical_width,
-            logical_height,
-            scale_factor,
-            label,
-            window_x,
-            window_y,
-            window_width,
-            window_height,
-            original_image_path,
-            edit_data,
-        )?;
-    }
-    #[cfg(not(feature = "screenshot-suite"))]
-    {
-        let _ = (
-            file_path,
-            image_x,
-            image_y,
-            image_physical_width,
-            image_physical_height,
-            logical_width,
-            logical_height,
-            scale_factor,
-            label,
-            window_x,
-            window_y,
-            window_width,
-            window_height,
-            original_image_path,
-            edit_data,
-        );
-        return Err("screenshot-suite 功能已禁用".to_string());
-    }
-
-    let _ = rx.recv_timeout(Duration::from_secs(1));
-
     Ok(())
 }
 

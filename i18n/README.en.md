@@ -30,7 +30,7 @@
 
 ## Introduction
 
-**QuickClipboard** is a cross-platform clipboard enhancement tool (currently supports Windows and Android), built with Tauri 2 + Rust + React. It starts working the moment you copy — automatically recording text, images, rich text, and files, so you can always retrieve anything you've ever copied. Beyond just recording, QuickClipboard integrates screenshot, image pinning, OCR, WebDAV sync, LAN sync/transfer, and more, delivering a comprehensive productivity boost for daily work.
+**QuickClipboard** is a cross-platform clipboard enhancement tool (currently supports Windows and Android), built with Tauri 2 + Rust + React. It starts working the moment you copy — automatically recording text, images, rich text, and files, so you can always retrieve anything you've ever copied. Beyond just recording, QuickClipboard integrates image pinning, OCR, WebDAV sync, LAN sync/transfer, and more, delivering a comprehensive productivity boost for daily work.
 
 > Native performance, low memory footprint, ready to use on launch, lives in your system tray.
 
@@ -45,9 +45,8 @@
 | Quick Paste             | Paste from list · Number keys 1-9 to paste · Plain text / formatted paste · Merge copy / merge paste · One-shot paste · Quick paste window · Win+V support |
 | Favorites & Groups      | Save favorites · Custom groups / icons / colors · Group sorting · Batch move to groups · Keyboard group switching   |
 | Emoji / Symbols / Gallery | Complete Emoji set · Symbol library · Custom image / GIF gallery · Recently used · Drag or click to use            |
-| Pin to Screen           | Desktop pinned images · GPU-accelerated rendering · Drag to resize / pin · Copy / save as · Pin after screenshot    |
-| Built-in Screenshot     | Standard screenshot · Quick screenshot / quick pin / quick OCR · Multi-monitor support · Scrolling screenshot · Auto-detect area · Screen color picker · Annotation tools |
-| OCR Recognition         | Image OCR · Screenshot OCR · One-click extract and copy text                                                        |
+| Pin to Screen           | Desktop pinned images · Drag to resize / pin · Copy / save as                                                        |
+| OCR Recognition         | Image OCR · One-click extract and copy text                                                                          |
 | Sync / Transfer         | WebDAV full sync · LAN HTTP direct connection · Pairing code connection · Auto push/pull · File sending              |
 | Edge Snap & Window      | Auto-hide at screen edge · Summon by cursor · Pin window · Remember position / size · Title bar orientation switch  |
 | Personalization         | Follow system / Light-Dark theme / Super background · Multiple theme styles · Custom background / blur · Custom font · Animation toggle |
@@ -255,25 +254,8 @@ npm run tauri dev
 
 # Build release
 npm run tauri:build
-
-# Community edition dev mode (without private plugins)
-npm run tauri:dev:community
-
-# Community edition build (without private plugins)
-npm run tauri:build:community
 ```
-
-### About Private Plugins
-
-The **official release** of this project includes the following private plugins (not included in the open-source scope):
-
-- `gpu-image-viewer` (GPU-accelerated image viewer): Enhances pin-to-screen and image preview performance, significantly reducing memory usage when multiple pinned image windows are open.
-- `screenshot-suite` (Screenshot suite): Includes free-form screenshot, screenshot-to-pin, screenshot OCR, scrolling screenshot, and related capabilities.
-
----
 
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
-
-> Private plugins `gpu-image-viewer` and `screenshot-suite` are not included in the open-source scope and are only available in the official release.

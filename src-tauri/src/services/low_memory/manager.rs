@@ -19,7 +19,6 @@ const WEBVIEW_LABELS: &[&str] = &[
     "context-menu",
     "settings",
     "text-editor",
-    "screenshot",
     "updater",
 ];
 
@@ -29,7 +28,6 @@ const AUTO_LOW_MEMORY_WINDOW_LABELS: &[&str] = &[
     "updater",
     "preview-window",
     "context-menu",
-    "screenshot",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

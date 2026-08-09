@@ -16,7 +16,6 @@ import SyncTransferSection from './sections/SyncTransferSection';
 import AIConfigSection from './sections/AIConfigSection';
 import TranslationSection from './sections/TranslationSection';
 import PreviewSection from './sections/PreviewSection';
-import ScreenshotSection from './sections/ScreenshotSection';
 import SoundSection from './sections/SoundSection';
 import AppFilterSection from './sections/AppFilterSection';
 import DataManagementSection from './sections/DataManagementSection';
@@ -43,7 +42,6 @@ function App() {
   const [shortcutsTab, setShortcutsTab] = useState('globalHotkey');
   const shortcutsTabs = [
     { id: 'globalHotkey', label: t('settings.shortcuts.tabs.globalHotkey') },
-    { id: 'screenshotHotkey', label: t('settings.shortcuts.tabs.screenshotHotkey') },
     { id: 'pinOps', label: t('settings.shortcuts.tabs.pinOps') },
     { id: 'navigation', label: t('settings.shortcuts.tabs.navigation') },
     { id: 'quickActions', label: t('settings.shortcuts.tabs.quickActions') },
@@ -147,9 +145,6 @@ function App() {
         break;
       case 'quickpaste':
         content = <PreviewSection settings={snap} onSettingChange={handleSettingChange} />;
-        break;
-      case 'screenshot':
-        content = <ScreenshotSection settings={snap} onSettingChange={handleSettingChange} />;
         break;
       case 'sound':
         content = <SoundSection settings={snap} onSettingChange={handleSettingChange} />;

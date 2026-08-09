@@ -120,12 +120,6 @@ pub async fn show_tray_menu(app: AppHandle) -> Result<(), String> {
         menu_item_with_state("toggle", "显示/隐藏", Some("ti ti-app-window"), is_force_update),
         separator_item(),
         menu_item_with_state("settings", "设置", Some("ti ti-settings"), is_force_update),
-        menu_item_with_state(
-            "screenshot",
-            "截屏",
-            Some("ti ti-screenshot"),
-            is_force_update || !settings.screenshot_enabled,
-        ),
         CtxMenuItem::submenu(
             "pin-images",
             "贴图",
@@ -223,22 +217,6 @@ fn handle_tray_menu_selection(app: &AppHandle, selected_id: &str) {
         "settings" => {
             let _ = crate::windows::settings_window::open_settings_window(app);
         }
-        "screenshot" => {
-            let app = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                #[cfg(feature = "screenshot-suite")]
-                {
-                    if let Err(e) = screenshot_suite::start_screenshot(&app) {
-                        eprintln!("启动截图窗口失败: {}", e);
-                    }
-                }
-                #[cfg(not(feature = "screenshot-suite"))]
-                {
-                    let _ = app;
-                }
-            });
-        }
         "toggle-hotkeys" => {
             toggle_hotkeys(app);
         }
@@ -268,29 +246,13 @@ fn handle_tray_menu_selection(app: &AppHandle, selected_id: &str) {
                     if let Some((_, file_path)) = images.get(idx) {
                         let app = app.clone();
                         let file_path = file_path.clone();
-                        #[cfg(feature = "gpu-image-viewer")]
-                        if let Err(e) = crate::windows::native_pin_window::create_native_pin_from_file(
-                            app.clone(), file_path.clone(),
-                        ) {
-                            eprintln!("原生贴图窗口失败，尝试tauri版: {}", e);
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e2) = crate::windows::pin_image_window::pin_image_from_file(
-                                    app, file_path, None, None, None, None, None, None, None, None, None, None, None,
-                                ).await {
-                                    eprintln!("tauri版贴图窗口也失败: {}", e2);
-                                }
-                            });
-                        }
-                        #[cfg(not(feature = "gpu-image-viewer"))]
-                        {
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) = crate::windows::pin_image_window::pin_image_from_file(
-                                    app, file_path, None, None, None, None, None, None, None, None, None, None, None,
-                                ).await {
-                                    eprintln!("创建贴图窗口失败: {}", e);
-                                }
-                            });
-                        }
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = crate::windows::pin_image_window::pin_image_from_file(
+                                app, file_path, None, None, None, None, None, None, None, None, None, None, None,
+                            ).await {
+                                eprintln!("创建贴图窗口失败: {}", e);
+                            }
+                        });
                     }
                 }
             }

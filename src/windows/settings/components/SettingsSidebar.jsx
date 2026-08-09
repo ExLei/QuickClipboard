@@ -23,10 +23,6 @@ export const navigationItems = [{
   icon: "ti ti-clipboard-check",
   labelKey: 'settings.sections.quickpaste'
 }, {
-  id: 'screenshot',
-  icon: "ti ti-camera",
-  labelKey: 'settings.sections.screenshot'
-}, {
   id: 'sound',
   icon: "ti ti-volume",
   labelKey: 'settings.sections.sound'

@@ -9,7 +9,6 @@ export default defineConfig({
         './shared/**/*.{html,js,jsx,ts,tsx}',
         './index.html',
         './src/**/*.{html,js,jsx,ts,tsx}',
-        '../src-tauri/plugins/screenshot-suite/web/windows/**/*.{html,js,jsx,ts,tsx}',
       ],
     },
   },

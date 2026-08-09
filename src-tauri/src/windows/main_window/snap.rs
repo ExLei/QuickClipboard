@@ -507,8 +507,6 @@ pub fn hide_snapped_window(window: &WebviewWindow) -> Result<(), String> {
 
     crate::windows::preview_window::suppress_preview_for_main_window_hide(&window.app_handle());
     let _ = crate::windows::pin_image_window::close_image_preview(window.app_handle().clone());
-    #[cfg(feature = "gpu-image-viewer")]
-    let _ = crate::windows::native_pin_window::close_native_image_preview();
     let _ = crate::windows::preview_window::close_preview_window(window.app_handle().clone());
     let _ = window.emit("edge-snap-hide", ());
 

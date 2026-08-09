@@ -68,12 +68,6 @@ ratatui = "0.29"
 crossterm = "0.28"
 trash = "5.2.6"
 
-screenshot-suite = { path = "plugins/screenshot-suite", optional = true }
-
-# 图片查看器 (社区编译时不启用)
-gpu-image-viewer = { git = "ssh://git@github.com/mosheng1/gpu-image-viewer.git", optional = true }
-# gpu-image-viewer = { path = "plugins/gpu-image-viewer", optional = true }
-
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6.3", features = ["windows-native"] }
 windows = { version = "0.62", features = [
@@ -104,9 +98,7 @@ keyring = { version = "3.6.3", features = ["apple-native"] }
 keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust"] }
 
 [features]
-default = ["gpu-image-viewer", "screenshot-suite"]
-gpu-image-viewer = ["dep:gpu-image-viewer"]
-screenshot-suite = ["dep:screenshot-suite"]
+default = []
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]

@@ -1,3 +1,0 @@
-[submodule "src-tauri/plugins/screenshot-suite"]
-	path = src-tauri/plugins/screenshot-suite
-	url = git@github.com:mosheng1/screenshot-suite.git

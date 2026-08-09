@@ -9,12 +9,10 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:dev:no-watch": "tauri dev --no-watch",
-    "tauri:dev:community": "node scripts/community-build.js --dev",
     "tauri:build": "tauri build",
-    "tauri:build:community": "node scripts/community-build.js",
-    "check:community": "node scripts/community-check.js check",
-    "clippy:community": "node scripts/community-check.js clippy",
-    "test:rust": "node scripts/community-check.js test"
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
