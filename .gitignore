@@ -33,3 +33,6 @@ QuickClipboardWeb
 screenshot_Konva
 /src/windows/screenshot
 /src-tauri/plugins/gpu-image-viewer
+
+# CodeGraph 索引目录（本地生成）
+.codegraph/

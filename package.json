@@ -15,6 +15,7 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
+    "@colbymchenry/codegraph-linux-x64": "^1.4.1",
     "@tauri-apps/cli": "^2.11.2",
     "@unocss/reset": "^66.5.4",
     "@vitejs/plugin-react": "^5.1.0",
@@ -42,8 +43,8 @@
     "@tauri-apps/plugin-dialog": "^2.4.2",
     "@tauri-apps/plugin-fs": "^2.4.4",
     "@tauri-apps/plugin-http": "^2.5.2",
-    "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-opener": "^2.5.0",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.1.0",
     "dompurify": "^3.3.0",
