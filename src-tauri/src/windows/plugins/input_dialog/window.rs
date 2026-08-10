@@ -67,10 +67,12 @@ pub async fn show_dialog(
     .center()
     .always_on_top(true)
     .focused(true)
-    .visible(false)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| format!("创建输入对话框失败: {}", e))?;
+    .visible(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建输入对话框失败: {}", e))?;
 
     // 显示窗口
     window

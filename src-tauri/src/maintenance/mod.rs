@@ -175,6 +175,7 @@ fn wait_for_key() {
 
 #[cfg(not(windows))]
 fn wait_for_key() {
+    use std::io::Read;
     eprintln!("\n按 Enter 键退出...");
     let _ = std::io::stdin().read(&mut [0u8; 1]);
 }

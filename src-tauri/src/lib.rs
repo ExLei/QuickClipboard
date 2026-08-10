@@ -363,7 +363,9 @@ pub fn run() {
             commands::il_update_group,
             commands::il_move_image_to_group,
             commands::il_delete_group,
+            #[cfg(windows)]
             commands::recognize_image_ocr,
+            #[cfg(windows)]
             commands::recognize_file_ocr,
         ])
         .setup(|app| {

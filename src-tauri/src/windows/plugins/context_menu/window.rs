@@ -476,10 +476,12 @@ fn build_or_reuse_window(
     .focused(is_tray)
     .focusable(is_tray)
     .visible(false)
-    .skip_taskbar(true)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| format!("创建菜单窗口失败: {}", e))?;
+    .skip_taskbar(true);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建菜单窗口失败: {}", e))?;
 
     let _ = window.set_ignore_cursor_events(false);
     let _ = window.set_position(tauri::PhysicalPosition::new(init_phys_x, init_phys_y));

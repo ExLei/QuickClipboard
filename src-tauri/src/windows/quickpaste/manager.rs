@@ -30,10 +30,10 @@ fn create_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
     .focused(false)
     .focusable(false)
     .maximizable(false)
-    .minimizable(false)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .minimizable(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window.build().map_err(|e| e.to_string())?;
 
     #[cfg(debug_assertions)]
     window.open_devtools();

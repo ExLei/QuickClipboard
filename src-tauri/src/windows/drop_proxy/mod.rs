@@ -93,10 +93,12 @@ fn create_drop_proxy(app: &AppHandle) -> Result<WebviewWindow, String> {
     .resizable(false)
     .focusable(false)
     .maximizable(false)
-    .minimizable(false)
-    .drag_and_drop(true)
-    .build()
-    .map_err(|e| format!("创建拖放代理窗口失败: {}", e))?;
+    .minimizable(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(true);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建拖放代理窗口失败: {}", e))?;
 
     bind_drop_events(&window, app.clone());
 

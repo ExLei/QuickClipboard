@@ -579,7 +579,8 @@ fn extract_gif_first_frame(data: &[u8]) -> Option<Vec<u8>> {
     Some(buffer)
 }
 
-// 使用 OCR 识别图片文字
+// 使用 OCR 识别图片文字（仅 Windows：依赖 qcocr）
+#[cfg(windows)]
 fn ocr_image_text(data: &[u8]) -> Option<String> {
     use qcocr::recognize_from_bytes;
     use std::sync::mpsc;
@@ -604,7 +605,6 @@ fn ocr_image_text(data: &[u8]) -> Option<String> {
     if text.is_empty() {
         return None;
     }
-
     let cleaned: String = text
         .chars()
         .filter(|c| c.is_alphanumeric())
@@ -616,6 +616,12 @@ fn ocr_image_text(data: &[u8]) -> Option<String> {
     } else {
         Some(cleaned)
     }
+}
+
+// 非 Windows 平台：不提供 OCR（避免依赖 qcocr）
+#[cfg(not(windows))]
+fn ocr_image_text(_data: &[u8]) -> Option<String> {
+    None
 }
 
 fn extension_from_filename(filename: &str, fallback: &str) -> String {

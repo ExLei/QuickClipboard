@@ -186,10 +186,12 @@ fn create_preview_window(
     .skip_taskbar(true)
     .focused(false)
     .focusable(false)
-    .visible(false)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| format!("创建预览窗口失败: {}", e))?;
+    .visible(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建预览窗口失败: {}", e))?;
 
     apply_preview_window_bounds(
         &window,

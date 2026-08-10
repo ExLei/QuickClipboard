@@ -1,6 +1,7 @@
 // OCR 识别命令
 
 // OCR识别结果结构
+#[cfg(windows)]
 #[derive(Debug, serde::Serialize)]
 pub struct OcrWord {
     pub text: String,
@@ -10,6 +11,7 @@ pub struct OcrWord {
     pub height: f32,
 }
 
+#[cfg(windows)]
 #[derive(Debug, serde::Serialize)]
 pub struct OcrLine {
     pub text: String,
@@ -21,6 +23,7 @@ pub struct OcrLine {
     pub word_gaps: Vec<f32>,
 }
 
+#[cfg(windows)]
 #[derive(Debug, serde::Serialize)]
 pub struct OcrResult {
     pub text: String,
@@ -28,6 +31,7 @@ pub struct OcrResult {
 }
 
 // OCR识别图片字节数组
+#[cfg(windows)]
 #[tauri::command]
 pub async fn recognize_image_ocr(image_data: Vec<u8>) -> Result<OcrResult, String> {
     tokio::task::spawn_blocking(move || {
@@ -43,6 +47,7 @@ pub async fn recognize_image_ocr(image_data: Vec<u8>) -> Result<OcrResult, Strin
 }
 
 // OCR识别图片文件
+#[cfg(windows)]
 #[tauri::command]
 pub async fn recognize_file_ocr(
     file_path: String,
@@ -62,6 +67,7 @@ pub async fn recognize_file_ocr(
 }
 
 // 转换OCR结果为返回格式
+#[cfg(windows)]
 fn convert_ocr_result(result: qcocr::OcrRecognitionResult) -> Result<OcrResult, String> {
     let lines = result
         .lines

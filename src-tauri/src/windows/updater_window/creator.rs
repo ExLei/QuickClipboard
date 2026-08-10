@@ -127,7 +127,8 @@ async fn check_updates_if_due(app: &AppHandle) -> Result<bool, String> {
     check_updates(app, !settings.disable_update_popup).await
 }
 
-// 检测当前运行的程序是否为安装版
+// 检测当前运行的程序是否为安装版（仅 Windows：读取注册表）
+#[cfg(windows)]
 fn is_installed_version() -> bool {
     use std::path::Path;
     use winreg::enums::*;
@@ -185,6 +186,12 @@ fn is_installed_version() -> bool {
     false
 }
 
+// 非 Windows 平台：无安装版概念，视为便携版
+#[cfg(not(windows))]
+fn is_installed_version() -> bool {
+    false
+}
+
 pub fn start_update_checker(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let _ = check_updates_if_due(&app).await;
@@ -217,10 +224,12 @@ pub fn open_updater_window(app: &AppHandle, force_update: bool) -> Result<Webvie
     .always_on_top(true)
     .visible(true)
     .focused(false)
-    .focusable(false)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| format!("创建更新窗口失败: {}", e))?;
+    .focusable(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建更新窗口失败: {}", e))?;
 
     if let Ok(size) = window.outer_size() {
         let margin: i32 = 12;

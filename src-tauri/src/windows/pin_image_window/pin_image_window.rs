@@ -284,10 +284,12 @@ async fn create_pin_image_window(
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(false)
-    .visible(false)
-    .drag_and_drop(false)
-    .build()
-    .map_err(|e| format!("创建贴图窗口失败: {}", e))?;
+    .visible(false);
+    #[cfg(windows)]
+    let window = window.drag_and_drop(false);
+    let window = window
+        .build()
+        .map_err(|e| format!("创建贴图窗口失败: {}", e))?;
 
     window
         .set_position(PhysicalPosition::new(physical_x, physical_y))

@@ -453,8 +453,11 @@ pub fn register_paste_plain_text_hotkey(shortcut_str: &str) -> Result<(), String
                         // 重复按下
                         let shortcut = shortcut_owned.clone();
                         std::thread::spawn(move || {
-                            use crate::services::paste::keyboard::set_trigger_key_from_shortcut;
-                            set_trigger_key_from_shortcut(&shortcut);
+                            #[cfg(windows)]
+                            {
+                                use crate::services::paste::keyboard::set_trigger_key_from_shortcut;
+                                set_trigger_key_from_shortcut(&shortcut);
+                            }
                             let _ = simulate_paste_only();
                         });
                     }
@@ -477,10 +480,12 @@ pub fn register_paste_plain_text_hotkey(shortcut_str: &str) -> Result<(), String
 // 首次按下
 fn handle_paste_plain_text_press(app: &AppHandle) -> Result<(), String> {
     use crate::services::database::{get_clipboard_item_by_id, query_clipboard_items, QueryParams};
+    #[cfg(windows)]
     use crate::services::paste::keyboard::set_trigger_key_from_shortcut;
     use crate::services::paste::paste_handler::paste_clipboard_item_with_format;
     use crate::services::paste::PasteAction;
 
+    #[cfg(windows)]
     set_trigger_key_from_shortcut(&crate::get_settings().paste_plain_text_shortcut);
 
     let state = crate::get_window_state();
@@ -566,6 +571,7 @@ pub fn register_number_shortcuts(modifier: &str) -> Result<(), String> {
                                 } else {
                                     0x31 + index as u16
                                 };
+                                #[cfg(windows)]
                                 crate::services::paste::keyboard::set_trigger_key_raw(vk);
                                 let _ = simulate_paste_only();
                             }
@@ -628,6 +634,7 @@ pub fn unregister_number_shortcuts() {
 // 首次按下
 fn handle_number_shortcut_press(index: usize) -> Result<(), String> {
     use crate::services::database::{get_clipboard_item_by_id, query_clipboard_items, QueryParams};
+    #[cfg(windows)]
     use crate::services::paste::keyboard;
     use crate::services::paste::paste_handler::paste_clipboard_item_with_update;
 
@@ -639,6 +646,7 @@ fn handle_number_shortcut_press(index: usize) -> Result<(), String> {
     } else {
         0x31 + index as u16 // '1'-'9'
     };
+    #[cfg(windows)]
     keyboard::set_trigger_key_raw(vk);
 
     let items = query_clipboard_items(QueryParams {

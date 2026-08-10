@@ -24,7 +24,6 @@ pub fn create_text_editor_window(
     if let Some(group) = group_name {
         url = format!("{}&group={}", url, group);
     }
-
     let editor_window =
         tauri::WebviewWindowBuilder::new(app, &window_label, tauri::WebviewUrl::App(url.into()))
             .title("文本编辑器 - 快速剪贴板")
@@ -38,10 +37,12 @@ pub fn create_text_editor_window(
             .shadow(false)
             .skip_taskbar(false)
             .visible(true)
-            .focused(true)
-            .drag_and_drop(false)
-            .build()
-            .map_err(|e| format!("创建文本编辑器窗口失败: {}", e))?;
+            .focused(true);
+    #[cfg(windows)]
+    let editor_window = editor_window.drag_and_drop(false);
+    let editor_window = editor_window
+        .build()
+        .map_err(|e| format!("创建文本编辑器窗口失败: {}", e))?;
 
     let editor_window_for_events = editor_window.clone();
     editor_window.on_window_event(move |event| match event {
