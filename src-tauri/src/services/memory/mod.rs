@@ -25,6 +25,8 @@ use windows::Win32::System::{
         GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
     },
 };
+#[cfg(windows)]
+use windows::Win32::Foundation::CloseHandle;
 
 #[cfg(windows)]
 fn trim_process_working_set(
@@ -61,6 +63,7 @@ fn collect_descendant_process_ids(root_pid: u32) -> Vec<u32> {
 
         has_entry = unsafe { Process32NextW(snapshot, &mut entry) }.is_ok();
     }
+    let _ = unsafe { CloseHandle(snapshot) };
 
     let mut descendants = Vec::new();
     let mut visited = HashSet::new();
@@ -96,6 +99,7 @@ fn cleanup_descendant_processes(root_pid: u32) {
 
         if let Ok(process) = handle {
             trim_process_working_set(process);
+            let _ = unsafe { CloseHandle(process) };
         }
     }
 }

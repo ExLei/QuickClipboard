@@ -269,11 +269,47 @@ fn destroy_all_webviews(app: &AppHandle) {
 }
 
 // 重建主窗口
+pub fn ensure_main_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(windows)]
+        if window.hwnd().is_ok() {
+            return Ok(window);
+        }
+
+        #[cfg(not(windows))]
+        {
+            return Ok(window);
+        }
+
+        let _ = window.destroy();
+    }
+
+    recreate_main_window(app)?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口重建后仍不可用".to_string())?;
+    #[cfg(windows)]
+    if window.hwnd().is_err() {
+        return Err("主窗口重建后句柄仍不可用".to_string());
+    }
+    Ok(window)
+}
+
 fn recreate_main_window(app: &AppHandle) -> Result<(), String> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-    if app.get_webview_window("main").is_some() {
-        return Ok(());
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(windows)]
+        if window.hwnd().is_ok() {
+            return Ok(());
+        }
+
+        #[cfg(not(windows))]
+        {
+            return Ok(());
+        }
+
+        let _ = window.destroy();
     }
 
     let settings = crate::get_settings();
@@ -317,6 +353,11 @@ fn recreate_main_window(app: &AppHandle) -> Result<(), String> {
     let _ = window.open_devtools();
 
     crate::input_monitor::update_main_window(window.clone());
+
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        crate::services::system::focus::add_excluded_hwnd(hwnd.0 as isize);
+    }
 
     crate::init_edge_monitor(window.clone());
 

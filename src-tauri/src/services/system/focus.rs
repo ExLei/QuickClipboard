@@ -101,6 +101,7 @@ pub fn get_last_focus_hwnd() -> Option<isize> {
 pub fn get_foreground_app_info() -> Option<ForegroundAppInfo> {
     #[cfg(windows)]
     {
+        use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
         use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ};
         use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
@@ -146,6 +147,7 @@ pub fn get_foreground_app_info() -> Option<ForegroundAppInfo> {
                         .unwrap_or(&process_path)
                         .to_string();
                 }
+                let _ = CloseHandle(handle);
             }
 
             if process_name.is_empty() {
@@ -160,6 +162,7 @@ pub fn get_foreground_app_info() -> Option<ForegroundAppInfo> {
                             .unwrap_or(&process_path)
                             .to_string();
                     }
+                    let _ = CloseHandle(handle);
                 }
             }
 

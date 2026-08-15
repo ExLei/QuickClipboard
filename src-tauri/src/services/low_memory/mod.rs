@@ -10,7 +10,9 @@ pub use state::{
     try_start_exit_low_memory,
     finish_exit_low_memory,
 };
-pub use manager::{enter_low_memory_mode, exit_low_memory_mode, init_auto_low_memory_manager};
+pub use manager::{
+    ensure_main_window, enter_low_memory_mode, exit_low_memory_mode, init_auto_low_memory_manager,
+};
 pub use panel::{
     hide_panel,
     init_panel,

@@ -50,16 +50,19 @@ mod windows_impl {
     use super::*;
     use once_cell::sync::Lazy;
     use parking_lot::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     static CLIPBOARD_SOURCE_CACHE: Lazy<Mutex<Option<ClipboardSourceInfo>>> =
         Lazy::new(|| Mutex::new(None));
 
     static SOURCE_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
+    static SOURCE_MONITOR_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
     // 启动剪贴板来源监控
     pub fn start_clipboard_source_monitor() {
         use std::thread;
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM, LRESULT};
+        use windows::Win32::Foundation::{
+            GetLastError, ERROR_CLASS_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM,
+        };
         use windows::Win32::UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
             GetMessageW, RegisterClassW, TranslateMessage, MSG, WNDCLASSW,
@@ -79,6 +82,10 @@ mod windows_impl {
 
         thread::spawn(move || {
             unsafe {
+                SOURCE_MONITOR_THREAD_ID.store(
+                    windows::Win32::System::Threading::GetCurrentThreadId(),
+                    Ordering::SeqCst,
+                );
                 unsafe extern "system" fn wnd_proc(
                     hwnd: HWND,
                     msg: u32,
@@ -100,8 +107,9 @@ mod windows_impl {
                     ..Default::default()
                 };
 
-                if RegisterClassW(&wc) == 0 {
+                if RegisterClassW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
                     SOURCE_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+                    SOURCE_MONITOR_THREAD_ID.store(0, Ordering::SeqCst);
                     return;
                 }
 
@@ -116,17 +124,20 @@ mod windows_impl {
 
                 let Ok(hwnd) = hwnd else {
                     SOURCE_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+                    SOURCE_MONITOR_THREAD_ID.store(0, Ordering::SeqCst);
                     return;
                 };
 
                 if AddClipboardFormatListener(hwnd).is_err() {
                     SOURCE_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+                    SOURCE_MONITOR_THREAD_ID.store(0, Ordering::SeqCst);
+                    let _ = DestroyWindow(hwnd);
                     return;
                 }
 
                 let mut msg = MSG::default();
                 while SOURCE_MONITOR_RUNNING.load(Ordering::Relaxed) {
-                    if GetMessageW(&mut msg, Some(hwnd), 0, 0).as_bool() {
+                    if GetMessageW(&mut msg, None, 0, 0).as_bool() {
                         let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
                     } else {
@@ -136,13 +147,28 @@ mod windows_impl {
 
                 let _ = RemoveClipboardFormatListener(hwnd);
                 let _ = DestroyWindow(hwnd);
+                SOURCE_MONITOR_THREAD_ID.store(0, Ordering::SeqCst);
             }
         });
     }
 
     // 停止剪贴板来源监控
     pub fn stop_clipboard_source_monitor() {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+
         SOURCE_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+        let thread_id = SOURCE_MONITOR_THREAD_ID.load(Ordering::SeqCst);
+        if thread_id != 0 {
+            unsafe {
+                let _ = PostThreadMessageW(
+                    thread_id,
+                    WM_QUIT,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+        }
     }
 
     // 获取剪贴板来源
@@ -230,6 +256,7 @@ mod windows_impl {
 
     // 通过进程ID获取进程名称
     fn get_process_name_by_id(process_id: u32) -> (String, String) {
+        use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
         };
@@ -239,20 +266,32 @@ mod windows_impl {
             if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, process_id) {
                 let mut buffer = [0u16; 260];
                 let len = GetModuleFileNameExW(Some(handle), None, &mut buffer);
-                if len > 0 {
+                let result = if len > 0 {
                     let path = String::from_utf16_lossy(&buffer[..len as usize]);
                     let name = path.split('\\').last().unwrap_or(&path).to_string();
-                    return (path, name);
+                    Some((path, name))
+                } else {
+                    None
+                };
+                let _ = CloseHandle(handle);
+                if let Some(result) = result {
+                    return result;
                 }
             }
 
             if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) {
                 let mut buffer = [0u16; 260];
                 let len = GetModuleFileNameExW(Some(handle), None, &mut buffer);
-                if len > 0 {
+                let result = if len > 0 {
                     let path = String::from_utf16_lossy(&buffer[..len as usize]);
                     let name = path.split('\\').last().unwrap_or(&path).to_string();
-                    return (path, name);
+                    Some((path, name))
+                } else {
+                    None
+                };
+                let _ = CloseHandle(handle);
+                if let Some(result) = result {
+                    return result;
                 }
             }
 
@@ -262,6 +301,7 @@ mod windows_impl {
 
     // 获取 UWP 应用真实名称
     fn get_uwp_app_name(hwnd: windows::Win32::Foundation::HWND) -> Option<String> {
+        use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetWindowThreadProcessId};
         use windows::Win32::Foundation::LPARAM;
         use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
@@ -288,13 +328,21 @@ mod windows_impl {
                     if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, child_pid) {
                         let mut buffer = [0u16; 260];
                         let len = GetModuleFileNameExW(Some(handle), None, &mut buffer);
-                        if len > 0 {
+                        let result = if len > 0 {
                             let path = String::from_utf16_lossy(&buffer[..len as usize]);
                             let name = path.split('\\').last().unwrap_or(&path).to_string();
                             if !name.is_empty() && name.to_lowercase() != "applicationframehost.exe" {
-                                ctx.result = Some(name);
-                                return BOOL(0);
+                                Some(name)
+                            } else {
+                                None
                             }
+                        } else {
+                            None
+                        };
+                        let _ = CloseHandle(handle);
+                        if let Some(name) = result {
+                            ctx.result = Some(name);
+                            return BOOL(0);
                         }
                     }
                 }
@@ -308,6 +356,7 @@ mod windows_impl {
 
     // 获取所有可见窗口信息
     pub fn get_all_windows_info() -> Vec<AppInfo> {
+        use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::Foundation::{HWND, LPARAM};
         use windows::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
@@ -334,9 +383,15 @@ mod windows_impl {
                             if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
                                 let mut buf = [0u16; 260];
                                 let len = GetModuleFileNameExW(Some(handle), None, &mut buf);
-                                if len > 0 {
+                                let result = if len > 0 {
                                     let path = String::from_utf16_lossy(&buf[..len as usize]);
                                     let name = path.split('\\').last().unwrap_or(&path).to_string();
+                                    Some((name, path))
+                                } else {
+                                    None
+                                };
+                                let _ = CloseHandle(handle);
+                                if let Some((name, path)) = result {
                                     windows.push(AppInfo {
                                         name: title,
                                         process: name,
