@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 
 const RESIZE_HANDLE_TRIGGER_SIZE = 16;
 const RESIZE_HANDLE_SHOW_DELAY = 180;
@@ -151,6 +152,24 @@ function WindowResizeHandles() {
       clearHideTimer();
     };
   }, [isVisible]);
+
+  useEffect(() => {
+    const hideHandles = () => {
+      clearShowTimer();
+      clearHideTimer();
+      isResizingRef.current = false;
+      setIsResizing(false);
+      setIsVisible(false);
+    };
+
+    const unlistenWindowHide = listen('window-hide-animation', hideHandles);
+    const unlistenSnapHide = listen('edge-snap-hide', hideHandles);
+
+    return () => {
+      unlistenWindowHide.then(unlisten => unlisten()).catch(() => {});
+      unlistenSnapHide.then(unlisten => unlisten()).catch(() => {});
+    };
+  }, []);
 
   const handleMouseDown = (event, direction) => {
     if (event.button !== 0) {
