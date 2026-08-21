@@ -9,12 +9,13 @@ import { favoritesStore, loadFavoritesRange, pasteFavorite } from '@shared/store
 import { groupsStore } from '@shared/store/groupsStore';
 import { navigationStore } from '@shared/store/navigationStore';
 import { settingsStore } from '@shared/store/settingsStore';
-import { moveFavoriteItem, closePreviewWindow } from '@shared/api';
+import { getFavoritesHistory, moveFavoriteItem, closePreviewWindow } from '@shared/api';
 import FavoriteItem from './FavoriteItem';
 
 const SCROLL_DEBOUNCE_DELAY = 50;
 const LIST_PRELOAD_PADDING = 20;
 const LIST_VIEWPORT_PADDING = 120;
+const SELECTION_LOAD_PAGE_SIZE = 100;
 
 const FavoritesList = forwardRef(({
   onScrollStateChange
@@ -26,6 +27,7 @@ const FavoritesList = forwardRef(({
     endIndex: 0
   });
   const loadTimeoutRef = useRef(null);
+  const selectionRequestRef = useRef(0);
   const onScrollStateChangeRef = useRef(onScrollStateChange);
   const snap = useSnapshot(navigationStore);
   const favSnap = useSnapshot(favoritesStore);
@@ -179,36 +181,35 @@ const FavoritesList = forwardRef(({
     onScrollStateChangeRef.current?.({ atTop: true });
   }, [favSnap.filter, favSnap.contentType, groupsSnap.currentGroup, scrollerElement]);
 
-  const ensureRangeLoaded = useCallback(async (startIndex, endIndex) => {
-    const missingIndexes = [];
-    for (let index = startIndex; index <= endIndex; index += 1) {
-      if (!favoritesStore.hasItem(index)) {
-        missingIndexes.push(index);
+  const loadSelectionEntries = useCallback(async (startIndex, endIndex) => {
+    const entries = [];
+
+    for (let offset = startIndex; offset <= endIndex; offset += SELECTION_LOAD_PAGE_SIZE) {
+      const limit = Math.min(SELECTION_LOAD_PAGE_SIZE, endIndex - offset + 1);
+      const result = await getFavoritesHistory({
+        offset,
+        limit,
+        groupName: groupsSnap.currentGroup,
+        contentType: favSnap.contentType !== 'all' ? favSnap.contentType : undefined,
+        search: favSnap.filter || undefined,
+      });
+
+      result.items.forEach((item, itemOffset) => {
+        if (!item?.id) return;
+        entries.push({
+          id: item.id,
+          index: offset + itemOffset,
+          contentType: item.content_type,
+        });
+      });
+
+      if (result.items.length < limit) {
+        break;
       }
     }
 
-    if (!missingIndexes.length) {
-      return;
-    }
-
-    const loadStart = Math.max(0, startIndex - LIST_PRELOAD_PADDING);
-    const loadEnd = Math.min(favSnap.totalCount - 1, endIndex + LIST_PRELOAD_PADDING);
-    await loadFavoritesRange(loadStart, loadEnd, groupsSnap.currentGroup);
-  }, [favSnap.totalCount, groupsSnap.currentGroup]);
-
-  const buildSelectionEntries = useCallback((startIndex, endIndex) => {
-    const entries = [];
-    for (let index = startIndex; index <= endIndex; index += 1) {
-      const item = favoritesStore.getItem(index);
-      if (!item?.id) continue;
-      entries.push({
-        id: item.id,
-        index,
-        contentType: item.content_type,
-      });
-    }
     return entries;
-  }, []);
+  }, [favSnap.contentType, favSnap.filter, groupsSnap.currentGroup]);
 
   const handleItemClick = useCallback(async (item, index, event) => {
     if (settings.modifierClickMultiSelect === false) {
@@ -234,8 +235,11 @@ const FavoritesList = forwardRef(({
         const endIndex = Math.max(anchorIndex, index);
         // 先同步记录锚点，避免范围加载期间的下一次 Shift 点击被当成普通追加选择。
         favoritesStore.setSelectionAnchorIndex(anchorIndex);
-        await ensureRangeLoaded(startIndex, endIndex);
-        favoritesStore.selectRange(buildSelectionEntries(startIndex, endIndex));
+        const requestId = ++selectionRequestRef.current;
+        const entries = await loadSelectionEntries(startIndex, endIndex);
+        if (requestId === selectionRequestRef.current) {
+          favoritesStore.selectRange(entries);
+        }
         return true;
       }
 
@@ -252,10 +256,15 @@ const FavoritesList = forwardRef(({
     if (isShiftPressed && typeof selectionAnchorIndex === 'number') {
       const startIndex = Math.min(selectionAnchorIndex, index);
       const endIndex = Math.max(selectionAnchorIndex, index);
-      await ensureRangeLoaded(startIndex, endIndex);
-      favoritesStore.selectRange(buildSelectionEntries(startIndex, endIndex));
+      const requestId = ++selectionRequestRef.current;
+      const entries = await loadSelectionEntries(startIndex, endIndex);
+      if (requestId === selectionRequestRef.current) {
+        favoritesStore.selectRange(entries);
+      }
       return true;
     }
+
+    selectionRequestRef.current += 1;
 
     const entry = {
       id: item.id,
@@ -270,7 +279,7 @@ const FavoritesList = forwardRef(({
     }
     favoritesStore.setSelectionAnchorIndex(index);
     return true;
-  }, [buildSelectionEntries, currentSelectedIndex, ensureRangeLoaded, settings.modifierClickMultiSelect]);
+  }, [currentSelectedIndex, loadSelectionEntries, settings.modifierClickMultiSelect]);
 
   const handleRangeChanged = useCallback(({
     startIndex,

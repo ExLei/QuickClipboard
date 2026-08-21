@@ -9,13 +9,14 @@ import { ROW_HEIGHT_CONFIG } from '@shared/hooks/useItemCommon';
 import { clipboardStore, loadClipboardRange, pasteClipboardItem } from '@shared/store/clipboardStore';
 import { navigationStore } from '@shared/store/navigationStore';
 import { settingsStore } from '@shared/store/settingsStore';
-import { moveClipboardItemToTop, moveClipboardItemById, closePreviewWindow } from '@shared/api';
+import { getClipboardHistory, moveClipboardItemToTop, moveClipboardItemById, closePreviewWindow } from '@shared/api';
 import { getOneTimePasteEnabled } from '@shared/services/oneTimePaste';
 import ClipboardItem from './ClipboardItem';
 
 const SCROLL_DEBOUNCE_DELAY = 50;
 const LIST_PRELOAD_PADDING = 20;
 const LIST_VIEWPORT_PADDING = 120;
+const SELECTION_LOAD_PAGE_SIZE = 100;
 
 const ClipboardList = forwardRef(({
   onScrollStateChange
@@ -29,6 +30,7 @@ const ClipboardList = forwardRef(({
   const isWindowHiddenRef = useRef(false);
   const loadTimeoutRef = useRef(null);
   const loadMissingRangeRef = useRef(null);
+  const selectionRequestRef = useRef(0);
   const onScrollStateChangeRef = useRef(onScrollStateChange);
   const snap = useSnapshot(navigationStore);
   const clipSnap = useSnapshot(clipboardStore);
@@ -262,23 +264,34 @@ const ClipboardList = forwardRef(({
     return () => cleanup.then(fn => fn());
   }, []);
 
-  const ensureRangeLoaded = useCallback(async (startIndex, endIndex) => {
-    await loadMissingRange(startIndex, endIndex);
-  }, [loadMissingRange]);
-
-  const buildSelectionEntries = useCallback((startIndex, endIndex) => {
+  const loadSelectionEntries = useCallback(async (startIndex, endIndex) => {
     const entries = [];
-    for (let index = startIndex; index <= endIndex; index += 1) {
-      const item = clipboardStore.getItem(index);
-      if (!item?.id) continue;
-      entries.push({
-        id: item.id,
-        index,
-        contentType: item.content_type,
+
+    for (let offset = startIndex; offset <= endIndex; offset += SELECTION_LOAD_PAGE_SIZE) {
+      const limit = Math.min(SELECTION_LOAD_PAGE_SIZE, endIndex - offset + 1);
+      const result = await getClipboardHistory({
+        offset,
+        limit,
+        contentType: clipSnap.contentType !== 'all' ? clipSnap.contentType : undefined,
+        search: clipSnap.filter || undefined,
       });
+
+      result.items.forEach((item, itemOffset) => {
+        if (!item?.id) return;
+        entries.push({
+          id: item.id,
+          index: offset + itemOffset,
+          contentType: item.content_type,
+        });
+      });
+
+      if (result.items.length < limit) {
+        break;
+      }
     }
+
     return entries;
-  }, []);
+  }, [clipSnap.contentType, clipSnap.filter]);
 
   const handleItemClick = useCallback(async (item, index, event) => {
     if (settings.modifierClickMultiSelect === false) {
@@ -304,8 +317,11 @@ const ClipboardList = forwardRef(({
         const endIndex = Math.max(anchorIndex, index);
         // 先同步记录锚点，避免范围加载期间的下一次 Shift 点击被当成普通追加选择。
         clipboardStore.setSelectionAnchorIndex(anchorIndex);
-        await ensureRangeLoaded(startIndex, endIndex);
-        clipboardStore.selectRange(buildSelectionEntries(startIndex, endIndex));
+        const requestId = ++selectionRequestRef.current;
+        const entries = await loadSelectionEntries(startIndex, endIndex);
+        if (requestId === selectionRequestRef.current) {
+          clipboardStore.selectRange(entries);
+        }
         return true;
       }
 
@@ -322,10 +338,15 @@ const ClipboardList = forwardRef(({
     if (isShiftPressed && typeof selectionAnchorIndex === 'number') {
       const startIndex = Math.min(selectionAnchorIndex, index);
       const endIndex = Math.max(selectionAnchorIndex, index);
-      await ensureRangeLoaded(startIndex, endIndex);
-      clipboardStore.selectRange(buildSelectionEntries(startIndex, endIndex));
+      const requestId = ++selectionRequestRef.current;
+      const entries = await loadSelectionEntries(startIndex, endIndex);
+      if (requestId === selectionRequestRef.current) {
+        clipboardStore.selectRange(entries);
+      }
       return true;
     }
+
+    selectionRequestRef.current += 1;
 
     const entry = {
       id: item.id,
@@ -340,7 +361,7 @@ const ClipboardList = forwardRef(({
     }
     clipboardStore.setSelectionAnchorIndex(index);
     return true;
-  }, [buildSelectionEntries, currentSelectedIndex, ensureRangeLoaded, settings.modifierClickMultiSelect]);
+  }, [currentSelectedIndex, loadSelectionEntries, settings.modifierClickMultiSelect]);
 
   const handleRangeChanged = useCallback(({
     startIndex,
