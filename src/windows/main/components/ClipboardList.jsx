@@ -516,6 +516,7 @@ const ClipboardList = forwardRef(({
                 showShortcut={showShortcut}
                 showIndex={showIndex}
                 animationDelay={animationDelay}
+                leftClickAction={settings.leftClickAction}
               />
             </div>
           </div> : <div className={heightClass}>
@@ -533,6 +534,7 @@ const ClipboardList = forwardRef(({
               showShortcut={showShortcut}
               showIndex={showIndex}
               animationDelay={animationDelay}
+              leftClickAction={settings.leftClickAction}
             />
           </div>;
         }} isScrolling={handleVirtuosoScrollState} style={{
@@ -554,6 +556,7 @@ const ClipboardList = forwardRef(({
               isDraggable={!isMultiSelectMode}
               showShortcut={showShortcut}
               showIndex={showIndex}
+              leftClickAction={settings.leftClickAction}
             />
           </div>
         );

@@ -10,7 +10,7 @@ import { showClipboardItemContextMenu } from '@shared/utils/contextMenu';
 import { createDragPreviewIcon, createImagesDragPreviewIcon } from '@shared/utils/dragPreviewIcon';
 import { getPrimaryType } from '@shared/utils/contentType';
 import { useTranslation } from 'react-i18next';
-import { addClipboardToFavorites, deleteFavorite, togglePinClipboardItem, showPreviewWindow, closePreviewWindow } from '@shared/api';
+import { addClipboardToFavorites, copyClipboardItem, deleteFavorite, togglePinClipboardItem, showPreviewWindow, closePreviewWindow } from '@shared/api';
 import { favoritesStore } from '@shared/store/favoritesStore';
 import { openEditorForClipboard } from '@shared/api/textEditor';
 import { toast, TOAST_SIZES, TOAST_POSITIONS } from '@shared/store/toastStore';
@@ -65,7 +65,8 @@ function ClipboardItem({
   isDraggable = true,
   showShortcut = true,
   showIndex = true,
-  animationDelay = 0
+  animationDelay = 0,
+  leftClickAction = 'single_paste'
 }) {
   const {
     t
@@ -317,29 +318,70 @@ function ClipboardItem({
     zIndex: isDragging ? 1000 : 'auto'
   };
 
-  // 处理点击粘贴
+  const executePaste = useCallback(async () => {
+    try {
+      await pasteClipboardItem(item.id);
+      // 粘贴后置顶
+      if (!getOneTimePasteEnabled() && settingsStore.pasteToTop && item.id && !item.is_pinned) {
+        try {
+          await moveClipboardItemToTop(item.id);
+        } finally {
+          clipboardStore.items = {};
+        }
+      }
+    } catch (error) {
+      console.error('粘贴失败:', error);
+      toast.error(t('common.pasteFailed'), {
+        size: TOAST_SIZES.EXTRA_SMALL,
+        position: TOAST_POSITIONS.BOTTOM_RIGHT
+      });
+    }
+  }, [item.id, item.is_pinned, t]);
+
+  const executeCopy = useCallback(async () => {
+    try {
+      await copyClipboardItem(item.id);
+      toast.success(t('common.copied'), {
+        size: TOAST_SIZES.EXTRA_SMALL,
+        position: TOAST_POSITIONS.BOTTOM_RIGHT
+      });
+    } catch (error) {
+      console.error('复制失败:', error);
+      toast.error(t('common.copyFailed'), {
+        size: TOAST_SIZES.EXTRA_SMALL,
+        position: TOAST_POSITIONS.BOTTOM_RIGHT
+      });
+    }
+  }, [item.id, t]);
+
+  const executeLeftClickAction = useCallback(async (action) => {
+    if (action === 'single_paste' || action === 'double_paste') {
+      await executePaste();
+    } else if (action === 'single_copy' || action === 'double_copy') {
+      await executeCopy();
+    }
+  }, [executeCopy, executePaste]);
+
+  // 双击模式由 onDoubleClick 统一触发，避免双击时执行两次单击动作。
   const handleClick = async (event) => {
     const handledByParent = onClick ? await onClick(item, index, event) : false;
     if (handledByParent) {
       return;
     }
-    try {
-        await pasteClipboardItem(item.id);
-        // 粘贴后置顶
-        if (!getOneTimePasteEnabled() && settingsStore.pasteToTop && item.id && !item.is_pinned) {
-          try {
-            await moveClipboardItemToTop(item.id);
-          } finally {
-            clipboardStore.items = {};
-          }
-        }
-      } catch (error) {
-        console.error('粘贴失败:', error);
-        toast.error(t('common.pasteFailed'), {
-          size: TOAST_SIZES.EXTRA_SMALL,
-          position: TOAST_POSITIONS.BOTTOM_RIGHT
-        });
-      }
+    const action = leftClickAction || 'single_paste';
+    if (action === 'single_paste' || action === 'single_copy') {
+      await executeLeftClickAction(action);
+    }
+  };
+
+  const handleDoubleClick = async (event) => {
+    if (isMultiSelectMode || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+    const action = leftClickAction || 'single_paste';
+    if (action === 'double_paste' || action === 'double_copy') {
+      await executeLeftClickAction(action);
+    }
   };
 
   // 处理鼠标悬停
@@ -645,6 +687,7 @@ function ClipboardItem({
       {...(isImageOrFileType || !isDraggable ? {} : listeners)}
       data-index={index}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -877,7 +920,8 @@ function areClipboardItemPropsEqual(prevProps, nextProps) {
     && prevProps.isDraggable === nextProps.isDraggable
     && prevProps.showShortcut === nextProps.showShortcut
     && prevProps.showIndex === nextProps.showIndex
-    && prevProps.animationDelay === nextProps.animationDelay;
+    && prevProps.animationDelay === nextProps.animationDelay
+    && prevProps.leftClickAction === nextProps.leftClickAction;
 }
 
 export default memo(ClipboardItem, areClipboardItemPropsEqual);
