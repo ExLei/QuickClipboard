@@ -328,7 +328,7 @@ export const favoritesStore = proxy({
   },
 
   selectRange(entries) {
-    this.replaceSelection([...this.selectedEntries, ...entries])
+    this.replaceSelection(entries)
   },
 
   getSelectedIds() {

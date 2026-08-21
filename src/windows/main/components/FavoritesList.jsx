@@ -218,7 +218,8 @@ const FavoritesList = forwardRef(({
     const isCtrlLikePressed = Boolean(event?.ctrlKey || event?.metaKey);
     const isShiftPressed = Boolean(event?.shiftKey);
 
-    if (!isMultiSelectMode) {
+    const currentlyMultiSelect = favoritesStore.isMultiSelectMode;
+    if (!currentlyMultiSelect) {
       if (!isCtrlLikePressed && !isShiftPressed) {
         return false;
       }
@@ -231,9 +232,10 @@ const FavoritesList = forwardRef(({
           : index;
         const startIndex = Math.min(anchorIndex, index);
         const endIndex = Math.max(anchorIndex, index);
+        // 先同步记录锚点，避免范围加载期间的下一次 Shift 点击被当成普通追加选择。
+        favoritesStore.setSelectionAnchorIndex(anchorIndex);
         await ensureRangeLoaded(startIndex, endIndex);
         favoritesStore.selectRange(buildSelectionEntries(startIndex, endIndex));
-        favoritesStore.setSelectionAnchorIndex(anchorIndex);
         return true;
       }
 
@@ -246,22 +248,29 @@ const FavoritesList = forwardRef(({
       return true;
     }
 
-    if (isShiftPressed && typeof favSnap.selectionAnchorIndex === 'number') {
-      const startIndex = Math.min(favSnap.selectionAnchorIndex, index);
-      const endIndex = Math.max(favSnap.selectionAnchorIndex, index);
+    const selectionAnchorIndex = favoritesStore.selectionAnchorIndex;
+    if (isShiftPressed && typeof selectionAnchorIndex === 'number') {
+      const startIndex = Math.min(selectionAnchorIndex, index);
+      const endIndex = Math.max(selectionAnchorIndex, index);
       await ensureRangeLoaded(startIndex, endIndex);
       favoritesStore.selectRange(buildSelectionEntries(startIndex, endIndex));
       return true;
     }
 
-    favoritesStore.toggleSelectedEntry({
+    const entry = {
       id: item.id,
       index,
       contentType: item.content_type,
-    });
+    };
+    if (isCtrlLikePressed) {
+      favoritesStore.toggleSelectedEntry(entry);
+    } else {
+      // 多选模式下普通单击改为单选当前项，符合常见文件管理器行为。
+      favoritesStore.replaceSelection([entry]);
+    }
     favoritesStore.setSelectionAnchorIndex(index);
     return true;
-  }, [buildSelectionEntries, currentSelectedIndex, ensureRangeLoaded, favSnap.selectionAnchorIndex, isMultiSelectMode, settings.modifierClickMultiSelect]);
+  }, [buildSelectionEntries, currentSelectedIndex, ensureRangeLoaded, settings.modifierClickMultiSelect]);
 
   const handleRangeChanged = useCallback(({
     startIndex,

@@ -394,7 +394,7 @@ export const clipboardStore = proxy({
   },
 
   selectRange(entries) {
-    this.replaceSelection([...this.selectedEntries, ...entries])
+    this.replaceSelection(entries)
   },
 
   getSelectedIds() {
