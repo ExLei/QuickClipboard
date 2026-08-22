@@ -9,7 +9,7 @@ import FilterButton from './FilterButton';
 import GroupsPopup from './GroupsPopup';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
 
-const FILTER_BUTTON_SIZE = 28;
+const FILTER_BUTTON_SIZE = 20;
 const FILTER_BUTTON_GAP = 4;
 const GROUP_BUTTON_WIDTH = 60;
 const FILTER_IDS = ['all', 'text', 'image', 'file', 'link'];
