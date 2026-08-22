@@ -308,7 +308,11 @@ const ClipboardList = forwardRef(({
         return false;
       }
 
-      clipboardStore.enterMultiSelectMode();
+      clipboardStore.enterMultiSelectMode({
+        id: item.id,
+        index,
+        contentType: item.content_type,
+      });
 
       if (isShiftPressed) {
         const anchorIndex = typeof currentSelectedIndex === 'number' && currentSelectedIndex >= 0
@@ -326,11 +330,6 @@ const ClipboardList = forwardRef(({
         return true;
       }
 
-      clipboardStore.toggleSelectedEntry({
-        id: item.id,
-        index,
-        contentType: item.content_type,
-      });
       clipboardStore.setSelectionAnchorIndex(index);
       return true;
     }
@@ -355,6 +354,8 @@ const ClipboardList = forwardRef(({
       contentType: item.content_type,
     };
     if (isCtrlLikePressed) {
+      clipboardStore.toggleSelectedEntry(entry);
+    } else if (clipboardStore.selectedEntries.length === 1 && clipboardStore.hasSelectedId(entry.id)) {
       clipboardStore.toggleSelectedEntry(entry);
     } else {
       // 多选模式下普通单击改为单选当前项，符合常见文件管理器行为。

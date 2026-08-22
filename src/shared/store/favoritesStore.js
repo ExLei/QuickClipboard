@@ -269,11 +269,12 @@ export const favoritesStore = proxy({
     }
   },
   
-  enterMultiSelectMode() {
+  enterMultiSelectMode(entry = null) {
+    if (!entry?.id) return false
     this.isMultiSelectMode = true
-    this.selectedEntries = []
-    this.selectedIds = new Set()
-    this.selectionAnchorIndex = null
+    this.replaceSelection([entry])
+    this.selectionAnchorIndex = entry.index
+    return true
   },
 
   exitMultiSelectMode() {
@@ -317,7 +318,11 @@ export const favoritesStore = proxy({
     const normalizedEntry = this.normalizeSelectedEntry(entry)
     const exists = this.selectedEntries.some(selected => selected.id === normalizedEntry.id)
     if (exists) {
-      this.replaceSelection(this.selectedEntries.filter(selected => selected.id !== normalizedEntry.id))
+      if (this.selectedEntries.length === 1) {
+        this.exitMultiSelectMode()
+      } else {
+        this.replaceSelection(this.selectedEntries.filter(selected => selected.id !== normalizedEntry.id))
+      }
       return
     }
 

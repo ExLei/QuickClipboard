@@ -17,6 +17,7 @@ import {
 import { clipboardStore } from "@shared/store/clipboardStore";
 import { favoritesStore } from "@shared/store/favoritesStore";
 import { settingsStore } from "@shared/store/settingsStore";
+import { navigationStore } from "@shared/store/navigationStore";
 import {
   showContextMenu,
   createMenuPlacementFromEvent,
@@ -61,6 +62,7 @@ const TitleBar = forwardRef(
     const clipboardSnap = useSnapshot(clipboardStore);
     const favoritesSnap = useSnapshot(favoritesStore);
     const settingsSnap = useSnapshot(settingsStore);
+    const navigationSnap = useSnapshot(navigationStore);
     const searchRef = useRef(null);
     const [isPinned, setIsPinned] = useState(() =>
       Boolean(getWindowPinState()),
@@ -272,7 +274,16 @@ const TitleBar = forwardRef(
       if (isMultiSelectMode) {
         currentStore.exitMultiSelectMode();
       } else {
-        currentStore.enterMultiSelectMode();
+        const activeIndex = navigationSnap.currentSelectedIndex;
+        const activeItem = typeof activeIndex === "number" && activeIndex >= 0
+          ? currentStore.getItem(activeIndex)
+          : null;
+        if (!activeItem?.id) return;
+        currentStore.enterMultiSelectMode({
+          id: activeItem.id,
+          index: activeIndex,
+          contentType: activeItem.content_type,
+        });
       }
     };
     const handleMoreMenu = async (event) => {
