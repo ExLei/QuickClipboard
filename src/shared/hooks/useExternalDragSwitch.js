@@ -9,9 +9,9 @@ function hasDragPayload(dragInfo) {
 }
 
 export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, closePreview }) {
-  const [dndContextKey, setDndContextKey] = useState(0);
   const [showSafeZones, setShowSafeZones] = useState(false);
   const switchingRef = useRef(false);
+  const cancelDndDropRef = useRef(false);
   const previewRef = useRef(null);
   const activeDragRef = useRef(null);
   const previousClipPathRef = useRef('');
@@ -38,15 +38,26 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
     previewRef.current = { sortId, promise: createPreview(dragInfo) };
   }, [createPreview]);
 
-  const switchToExternalDrag = useCallback((sortId, dragInfo) => {
+  const switchToExternalDrag = useCallback((sortId, dragInfo, event) => {
     if (switchingRef.current || !hasDragPayload(dragInfo)) return;
     switchingRef.current = true;
+    cancelDndDropRef.current = true;
     activeDragRef.current = null;
     setShowSafeZones(false);
     clearDragVisuals();
     onDragCancel();
-    setDndContextKey(key => key + 1);
     closePreview?.();
+
+    document.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: event?.clientX || 0,
+      clientY: event?.clientY || 0,
+      screenX: event?.screenX || 0,
+      screenY: event?.screenY || 0,
+      buttons: 0,
+    }));
 
     (async () => {
       try {
@@ -71,7 +82,7 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
       const activeDrag = activeDragRef.current;
       if (!activeDrag || switchingRef.current) return;
       if (event.clientX <= EXTERNAL_DRAG_EDGE_THRESHOLD_PX || event.clientX >= window.innerWidth - EXTERNAL_DRAG_EDGE_THRESHOLD_PX) {
-        switchToExternalDrag(activeDrag.sortId, activeDrag.dragInfo);
+        switchToExternalDrag(activeDrag.sortId, activeDrag.dragInfo, event);
       }
     };
     document.addEventListener('mousemove', handleMouseMove, true);
@@ -98,15 +109,16 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
 
   const handleDndDragCancel = useCallback((event) => {
     activeDragRef.current = null;
+    cancelDndDropRef.current = false;
     setShowSafeZones(false);
     clearDragVisuals();
     onDragCancel(event);
   }, [clearDragVisuals, onDragCancel]);
 
   return {
-    dndContextKey,
     showSafeZones,
     prepareExternalDrag,
+    shouldCancelDndDrop: () => cancelDndDropRef.current,
     handleDndDragStart,
     handleDndDragEnd,
     handleDndDragCancel,

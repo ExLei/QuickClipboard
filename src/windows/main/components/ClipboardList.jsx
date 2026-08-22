@@ -109,9 +109,9 @@ const ClipboardList = forwardRef(({
   });
 
   const {
-    dndContextKey,
     showSafeZones,
     prepareExternalDrag,
+    shouldCancelDndDrop,
     handleDndDragStart,
     handleDndDragEnd,
     handleDndDragCancel,
@@ -485,7 +485,7 @@ const ClipboardList = forwardRef(({
     marginBottom: `${cardSpacingPx}px`
   } : undefined;
 
-  return <DndContext key={dndContextKey} sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDndDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDndDragCancel} modifiers={[]}>
+  return <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDndDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDndDragCancel} cancelDrop={shouldCancelDndDrop} modifiers={[]}>
     <ExternalDragSafeZones visible={showSafeZones} />
     <div className="flex-1 bg-qc-surface overflow-hidden custom-scrollbar-container transition-colors duration-500 clipboard-list" data-no-drag>
       <SortableContext items={itemsWithId.map(item => item._sortId)} strategy={strategy}>
