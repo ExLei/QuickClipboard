@@ -11,12 +11,10 @@ import {
   addClipboardToFavorites,
   deleteClipboardItems,
   mergeCopyClipboardItems,
-  mergePasteClipboardItems,
 } from "@shared/api/clipboard";
 import {
   deleteFavoriteItems,
   mergeCopyFavoriteItems,
-  mergePasteFavoriteItems,
 } from "@shared/api/favorites";
 import { moveFavoriteToGroup } from "@shared/api/groups";
 import {
@@ -25,7 +23,7 @@ import {
   showContextMenu,
 } from "@/plugins/context_menu/index.js";
 import { toast, TOAST_POSITIONS, TOAST_SIZES } from "@shared/store/toastStore";
-import { getSelectionMergeState } from "../utils/multiSelect";
+import { getSelectionMergeState, mergePasteSelectedItems } from "../utils/multiSelect";
 function MultiSelectActionBar({ activeTab }) {
   const { t } = useTranslation();
   const clipboardSnap = useSnapshot(clipboardStore);
@@ -83,13 +81,9 @@ function MultiSelectActionBar({ activeTab }) {
   const handleMergePaste = async () => {
     if (!selectedCount || !mergeState.canMerge) return;
     try {
-      if (activeTab === "clipboard") {
-        await mergePasteClipboardItems(selectedIds);
-      } else {
-        await mergePasteFavoriteItems(selectedIds);
+      if (await mergePasteSelectedItems(activeTab)) {
+        toast.success(t("multiSelect.mergePasted"), withToastConfig);
       }
-      currentStore.exitMultiSelectMode();
-      toast.success(t("multiSelect.mergePasted"), withToastConfig);
     } catch (error) {
       console.error("合并粘贴失败:", error);
       toast.error(error?.message || t("common.pasteFailed"), withToastConfig);

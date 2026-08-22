@@ -21,6 +21,7 @@ import { toggleWindowPin } from '@shared/services/titleBarActions';
 import { getVisibleMainTabs, isMainTabVisible } from '@shared/constants/tabVisibility';
 import { toast, TOAST_POSITIONS, TOAST_SIZES } from '@shared/store/toastStore';
 import { formatUserMessage } from '@shared/utils/userMessages';
+import { mergePasteSelectedItems } from './utils/multiSelect';
 import TitleBar from './components/TitleBar';
 import TabNavigation from './components/TabNavigation';
 import ClipboardTab from './components/ClipboardTab';
@@ -386,8 +387,26 @@ function App() {
       favoritesTabRef.current.navigateDown();
     }
   };
-  const handleExecuteItem = () => {
+  const handleExecuteItem = async () => {
     blurSearchInput();
+    const isMultiSelectMode = activeTab === 'clipboard'
+      ? clipboardStore.isMultiSelectMode
+      : activeTab === 'favorites'
+        ? favoritesStore.isMultiSelectMode
+        : false;
+
+    if (isMultiSelectMode) {
+      try {
+        if (await mergePasteSelectedItems(activeTab)) {
+          toast.success(t('multiSelect.mergePasted'), WEBDAV_TOAST_CONFIG);
+        }
+      } catch (error) {
+        console.error('合并粘贴失败:', error);
+        toast.error(error?.message || t('common.pasteFailed'), WEBDAV_TOAST_CONFIG);
+      }
+      return;
+    }
+
     if (activeTab === 'clipboard' && clipboardTabRef.current?.executeCurrentItem) {
       clipboardTabRef.current.executeCurrentItem();
     } else if (activeTab === 'favorites' && favoritesTabRef.current?.executeCurrentItem) {
