@@ -114,11 +114,7 @@ function TabNavigation({
     icon: 'ti ti-mood-smile'
   }];
   const tabs = allTabs.filter(tab => tab.id === 'clipboard' || visibleOptionalTabs.includes(tab.id));
-  const horizontalTabAreaMinPercent = 28;
-  const horizontalTabAreaMaxPercent = 50;
-  const horizontalTabAreaPercent = allTabs.length <= 1
-    ? horizontalTabAreaMaxPercent
-    : horizontalTabAreaMinPercent + (tabs.length - 1) * ((horizontalTabAreaMaxPercent - horizontalTabAreaMinPercent) / (allTabs.length - 1));
+  const horizontalTabAreaPercent = 35;
   const horizontalRightAreaPercent = 100 - horizontalTabAreaPercent;
 
   const emojiModes = [{
