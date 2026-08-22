@@ -63,7 +63,9 @@ pub fn add_excluded_hwnd(hwnd: isize) {
 
 // 聚焦剪贴板窗口
 pub fn focus_clipboard_window(window: WebviewWindow) -> Result<(), String> {
-    window.set_focus().map_err(|e| format!("设置窗口焦点失败: {}", e))
+    window.set_focus().map_err(|e| format!("设置窗口焦点失败: {}", e))?;
+    crate::hotkey::suspend_execute_item_hotkey();
+    Ok(())
 }
 
 // 仅保存当前焦点（手动）
@@ -84,11 +86,13 @@ pub fn restore_last_focus() -> Result<(), String> {
                 let _ = SetForegroundWindow(HWND(hwnd_val as *mut c_void));
             }
         }
+        crate::hotkey::resume_execute_item_hotkey();
         Ok(())
     }
     
     #[cfg(not(windows))]
     {
+        crate::hotkey::resume_execute_item_hotkey();
         Ok(())
     }
 }

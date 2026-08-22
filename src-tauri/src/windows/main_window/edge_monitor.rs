@@ -12,19 +12,11 @@ const EDGE_HIDE_DELAY_MS: u64 = 200;
 
 pub fn init_edge_monitor(window: WebviewWindow) {
     let window_for_event = window.clone();
-    window_for_event.on_window_event(move |event| {
+    window_for_event.on_window_event(|event| {
         match event {
             tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
                 // 调整窗口大小时，系统会持续重算边框位置，短暂暂停贴边自动切换避免闪烁
                 suppress_edge_actions_after_resize();
-            }
-            tauri::WindowEvent::Focused(true) => {
-                crate::hotkey::suspend_execute_item_hotkey();
-            }
-            tauri::WindowEvent::Focused(false) => {
-                if crate::windows::main_window::is_main_window_visible_for_updates() {
-                    crate::hotkey::resume_execute_item_hotkey();
-                }
             }
             _ => {}
         }

@@ -47,7 +47,7 @@ pub fn disable_navigation_hotkeys() {
     unregister_navigation_hotkeys();
 }
 
-// 主窗口获取输入焦点时暂停执行粘贴快捷键，避免全局 Enter 抢占输入法组合提交。
+// 输入框获得焦点时暂停执行粘贴快捷键，避免全局 Enter 抢占输入法组合提交。
 pub fn suspend_execute_item_hotkey() {
     if EXECUTE_ITEM_HOTKEY_SUSPENDED.swap(true, Ordering::SeqCst) {
         return;
@@ -56,7 +56,7 @@ pub fn suspend_execute_item_hotkey() {
     reload_navigation_hotkeys_from_settings();
 }
 
-// 主窗口失去焦点但仍显示时恢复执行粘贴快捷键。
+// 输入框失去焦点时恢复执行粘贴快捷键。
 pub fn resume_execute_item_hotkey() {
     if !EXECUTE_ITEM_HOTKEY_SUSPENDED.swap(false, Ordering::SeqCst) {
         return;
