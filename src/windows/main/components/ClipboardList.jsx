@@ -12,6 +12,8 @@ import { settingsStore } from '@shared/store/settingsStore';
 import { getClipboardHistory, moveClipboardItemToTop, moveClipboardItemById, closePreviewWindow } from '@shared/api';
 import { getOneTimePasteEnabled } from '@shared/services/oneTimePaste';
 import ClipboardItem from './ClipboardItem';
+import { useExternalDragSwitch } from '@shared/hooks/useExternalDragSwitch';
+import ExternalDragSafeZones from '@shared/components/ExternalDragSafeZones';
 
 const SCROLL_DEBOUNCE_DELAY = 50;
 const LIST_PRELOAD_PADDING = 20;
@@ -102,7 +104,22 @@ const ClipboardList = forwardRef(({
     collisionDetection
   } = useSortableList({
     items: itemsWithId,
-    onDragEnd: handleDragEnd
+    onDragEnd: handleDragEnd,
+    restrictToVertical: false,
+  });
+
+  const {
+    dndContextKey,
+    showSafeZones,
+    prepareExternalDrag,
+    handleDndDragStart,
+    handleDndDragEnd,
+    handleDndDragCancel,
+  } = useExternalDragSwitch({
+    onDragStart: handleDragStart,
+    onDragEnd: onDragEnd,
+    onDragCancel: handleDragCancel,
+    closePreview: () => closePreviewWindow().catch(() => { }),
   });
 
   const activeIndex = activeItem ? itemsWithId.findIndex(item => item._sortId === activeId || item.id === activeId) : -1;
@@ -468,7 +485,8 @@ const ClipboardList = forwardRef(({
     marginBottom: `${cardSpacingPx}px`
   } : undefined;
 
-  return <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDragStart} onDragEnd={onDragEnd} onDragCancel={handleDragCancel} modifiers={modifiers}>
+  return <DndContext key={dndContextKey} sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDndDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDndDragCancel} modifiers={[]}>
+    <ExternalDragSafeZones visible={showSafeZones} />
     <div className="flex-1 bg-qc-surface overflow-hidden custom-scrollbar-container transition-colors duration-500 clipboard-list" data-no-drag>
       <SortableContext items={itemsWithId.map(item => item._sortId)} strategy={strategy}>
         <Virtuoso ref={virtuosoRef} totalCount={clipSnap.totalCount || 0} scrollerRef={scrollerRefCallback} atTopStateChange={atTop => {
@@ -520,6 +538,7 @@ const ClipboardList = forwardRef(({
                 showIndex={showIndex}
                 animationDelay={animationDelay}
                 leftClickAction={settings.leftClickAction}
+                onPrepareExternalDrag={prepareExternalDrag}
               />
             </div>
           </div> : <div className={heightClass}>
@@ -539,6 +558,7 @@ const ClipboardList = forwardRef(({
               showIndex={showIndex}
               animationDelay={animationDelay}
               leftClickAction={settings.leftClickAction}
+              onPrepareExternalDrag={prepareExternalDrag}
             />
           </div>;
         }} isScrolling={handleVirtuosoScrollState} style={{
@@ -547,17 +567,17 @@ const ClipboardList = forwardRef(({
       </SortableContext>
     </div>
 
-    <DragOverlay dropAnimation={null}>
+    <DragOverlay dropAnimation={null} modifiers={[]} zIndex={1200}>
       {activeItem && activeIndex !== -1 && (() => {
         const overlayClass = settings.rowHeight === 'auto' ? 'h-auto' : heightClass;
         return (
-          <div className={`${overlayClass} rounded-md border border-qc-border shadow-lg bg-qc-panel/70 backdrop-blur-md`}>
+          <div className={`${overlayClass} relative z-[1200] rounded-md border border-qc-border shadow-lg bg-qc-panel/70 backdrop-blur-md`}>
             <ClipboardItem
               item={activeItem.item}
               index={activeIndex}
               sortId={activeItem._sortId}
               isDragActive={!isMultiSelectMode}
-              isDraggable={!isMultiSelectMode}
+              isDraggable={false}
               showShortcut={showShortcut}
               showIndex={showIndex}
               leftClickAction={settings.leftClickAction}
