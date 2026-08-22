@@ -1,5 +1,6 @@
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{WebviewWindow, Manager};
 
@@ -39,6 +40,8 @@ pub fn start_edge_monitoring() {
         let mut last_near_state = false;
         let mut last_hidden_state = false;
         let mut not_near_since_ms = None;
+        let mouse_state_version = Arc::new(AtomicU64::new(0));
+        let show_triggered_by_mouse = Arc::new(AtomicBool::new(false));
         
         loop {
             if !MONITORING_ACTIVE.load(Ordering::Relaxed) {
@@ -68,9 +71,17 @@ pub fn start_edge_monitoring() {
             }
  
             if last_hidden_state != state.is_hidden {
+                let was_hidden = last_hidden_state;
                 last_hidden_state = state.is_hidden;
                 not_near_since_ms = None;
-                if let Ok(is_near) = check_mouse_near_edge(&window, &state) {
+                mouse_state_version.fetch_add(1, Ordering::SeqCst);
+                if was_hidden
+                    && !state.is_hidden
+                    && show_triggered_by_mouse.swap(false, Ordering::SeqCst)
+                {
+                    // 鼠标触发显示后即使已快速移出，也保留进入状态以识别这次移出。
+                    last_near_state = true;
+                } else if let Ok(is_near) = check_mouse_near_edge(&window, &state) {
                     last_near_state = is_near;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -86,9 +97,14 @@ pub fn start_edge_monitoring() {
             };
 
             let state_changed = is_near != last_near_state;
-            if is_near {
+            if state_changed {
+                mouse_state_version.fetch_add(1, Ordering::SeqCst);
+            }
+
+            if is_near || state.is_hidden || state.is_pinned {
                 not_near_since_ms = None;
-            } else if not_near_since_ms.is_none() {
+            } else if last_near_state && not_near_since_ms.is_none() {
+                // 仅在鼠标从可见窗口移出时开始延迟，避免窗口在鼠标外呼出后立即隐藏。
                 not_near_since_ms = Some(current_time_millis());
             }
 
@@ -100,8 +116,14 @@ pub fn start_edge_monitoring() {
             if is_near && state.is_hidden {
                 if !crate::services::system::is_front_app_globally_disabled_from_settings() {
                     let window_for_task = window.clone();
+                    let show_triggered_by_mouse_for_task = show_triggered_by_mouse.clone();
                     let _ = window.app_handle().run_on_main_thread(move || {
-                        let _ = crate::show_snapped_window(&window_for_task);
+                        if crate::get_window_state().is_hidden {
+                            show_triggered_by_mouse_for_task.store(true, Ordering::SeqCst);
+                            if crate::show_snapped_window(&window_for_task).is_err() {
+                                show_triggered_by_mouse_for_task.store(false, Ordering::SeqCst);
+                            }
+                        }
                     });
                 }
             } else if !is_near
@@ -111,9 +133,24 @@ pub fn start_edge_monitoring() {
                     .map(|since| current_time_millis().saturating_sub(since) >= EDGE_HIDE_DELAY_MS)
                     .unwrap_or(false)
             {
+                not_near_since_ms = None;
                 let window_for_task = window.clone();
+                let expected_mouse_state_version = mouse_state_version.load(Ordering::SeqCst);
+                let mouse_state_version_for_task = mouse_state_version.clone();
                 let _ = window.app_handle().run_on_main_thread(move || {
-                    let _ = crate::hide_snapped_window(&window_for_task);
+                    if mouse_state_version_for_task.load(Ordering::SeqCst)
+                        != expected_mouse_state_version
+                    {
+                        return;
+                    }
+
+                    let current_state = crate::get_window_state();
+                    let mouse_still_outside = check_mouse_near_edge(&window_for_task, &current_state)
+                        .map(|is_near| !is_near)
+                        .unwrap_or(false);
+                    if mouse_still_outside && !current_state.is_hidden && !current_state.is_pinned {
+                        let _ = crate::hide_snapped_window(&window_for_task);
+                    }
                 });
             }
             
