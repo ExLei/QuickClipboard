@@ -26,7 +26,7 @@ pub fn start_focus_listener(app_handle: tauri::AppHandle) {
         }
         
         let mut excluded = Vec::new();
-        for label in ["main", "context-menu", "settings", "preview"] {
+        for label in ["main", "context-menu", "preview"] {
             if let Some(win) = app_handle.get_webview_window(label) {
                 if let Ok(hwnd) = win.hwnd() {
                     excluded.push(hwnd.0 as isize);
