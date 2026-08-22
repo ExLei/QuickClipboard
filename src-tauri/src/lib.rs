@@ -164,6 +164,7 @@ pub fn run() {
                 commands::drop_proxy::drop_proxy_save_resource,
                 commands::drop_proxy::drop_proxy_save_url,
                 commands::drop_proxy::drop_proxy_cleanup_orphan_resources,
+                commands::text_drag::start_text_drag,
                 windows::preview_window::show_preview_window,
                 windows::preview_window::close_preview_window,
                 windows::preview_window::reveal_preview_window,

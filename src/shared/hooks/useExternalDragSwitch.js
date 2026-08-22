@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startDrag } from '@crabnebula/tauri-plugin-drag';
+import { invoke } from '@tauri-apps/api/core';
 
 const EXTERNAL_DRAG_EDGE_THRESHOLD_PX = 24;
+
+function hasDragPayload(dragInfo) {
+  return Boolean(dragInfo?.item && ((Array.isArray(dragInfo.item) && dragInfo.item.length) || (!Array.isArray(dragInfo.item) && dragInfo.item.data)));
+}
 
 export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, closePreview }) {
   const [dndContextKey, setDndContextKey] = useState(0);
@@ -29,12 +34,12 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
   }, []);
 
   const prepareExternalDrag = useCallback((sortId, dragInfo) => {
-    if (!sortId || !dragInfo?.paths?.length || previewRef.current?.sortId === sortId) return;
+    if (!sortId || !hasDragPayload(dragInfo) || previewRef.current?.sortId === sortId) return;
     previewRef.current = { sortId, promise: createPreview(dragInfo) };
   }, [createPreview]);
 
   const switchToExternalDrag = useCallback((sortId, dragInfo) => {
-    if (switchingRef.current || !dragInfo?.paths?.length) return;
+    if (switchingRef.current || !hasDragPayload(dragInfo)) return;
     switchingRef.current = true;
     activeDragRef.current = null;
     setShowSafeZones(false);
@@ -47,7 +52,11 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
       try {
         const preview = previewRef.current;
         const icon = preview?.sortId === sortId ? await preview.promise : await createPreview(dragInfo);
-        await startDrag({ item: dragInfo.paths, icon: icon || dragInfo.paths[0], mode: 'copy' });
+        if (dragInfo.textPayload) {
+          await invoke('start_text_drag', dragInfo.textPayload);
+        } else {
+          await startDrag({ item: dragInfo.item, icon: icon || dragInfo.paths?.[0], mode: 'copy' });
+        }
       } catch (error) {
         console.error('启动系统拖拽失败:', error);
       } finally {
@@ -72,8 +81,8 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
   const handleDndDragStart = useCallback((event) => {
     const dragInfo = event.active.data.current?.externalDrag;
     prepareExternalDrag(event.active.id, dragInfo);
-    setShowSafeZones(Boolean(dragInfo?.paths?.length));
-    activeDragRef.current = dragInfo?.paths?.length ? { sortId: event.active.id, dragInfo } : null;
+    setShowSafeZones(hasDragPayload(dragInfo));
+    activeDragRef.current = hasDragPayload(dragInfo) ? { sortId: event.active.id, dragInfo } : null;
     previousClipPathRef.current = document.body.style.clipPath;
     document.body.classList.add('dragging-cursor');
     document.body.style.clipPath = 'inset(5px round 8px)';
