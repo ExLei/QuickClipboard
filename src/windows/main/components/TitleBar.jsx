@@ -37,11 +37,17 @@ import {
 } from "@shared/services/oneTimePaste";
 import { normalizeDisplayPriorityValue } from "@shared/utils/displayFormatPriority";
 import { formatUserMessage } from "@shared/utils/userMessages";
-import logoIcon from "@/assets/icon1024.png";
+import logoIcon from "@/assets/icon32.png";
 import TitleBarSearch from "./TitleBarSearch";
 import Tooltip from "@shared/components/common/Tooltip.jsx";
 const ACTIVE_ICON_BUTTON_CLASS =
   "bg-blue-500 bg-dynamic-primary text-white hover:bg-blue-600";
+const TITLE_BAR_IMAGE_ICON_STYLE = {
+  imageRendering: "pixelated",
+};
+const TITLE_BAR_FONT_ICON_STYLE = {
+  WebkitFontSmoothing: "none",
+};
 const TOAST_CONFIG = {
   size: TOAST_SIZES.EXTRA_SMALL,
   position: TOAST_POSITIONS.BOTTOM_RIGHT,
@@ -610,15 +616,24 @@ const TitleBar = forwardRef(
                   src={logoIcon}
                   alt="QuickClipboard"
                   className="h-4.5 w-4.5 rounded-sm"
+                  style={TITLE_BAR_IMAGE_ICON_STYLE}
                 />
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <i className="ti ti-arrow-big-up text-[12px] leading-none text-emerald-600 dark:text-emerald-400" />
+                  <i
+                    className="ti ti-arrow-big-up text-[12px] leading-none text-emerald-600 dark:text-emerald-400"
+                    style={TITLE_BAR_FONT_ICON_STYLE}
+                  />
                 </span>
               </button>
             </Tooltip>
           ) : (
             <div className="w-6 h-6 flex items-center justify-center pointer-events-none">
-              <img src={logoIcon} alt="QuickClipboard" className="w-5 h-5" />
+              <img
+                src={logoIcon}
+                alt="QuickClipboard"
+                className="w-5 h-5"
+                style={TITLE_BAR_IMAGE_ICON_STYLE}
+              />
             </div>
           )}
         </div>
@@ -664,6 +679,7 @@ const TitleBar = forwardRef(
                   }
                   style={{
                     fontSize: 16,
+                    ...TITLE_BAR_FONT_ICON_STYLE,
                   }}
                   data-stroke="1.5"
                 ></i>
@@ -684,6 +700,7 @@ const TitleBar = forwardRef(
                   className="ti ti-pin"
                   style={{
                     fontSize: 16,
+                    ...TITLE_BAR_FONT_ICON_STYLE,
                   }}
                   data-stroke="1.5"
                 ></i>
@@ -705,6 +722,7 @@ const TitleBar = forwardRef(
                   className="ti ti-dots"
                   style={{
                     fontSize: 16,
+                    ...TITLE_BAR_FONT_ICON_STYLE,
                   }}
                   data-stroke="1.5"
                 ></i>
