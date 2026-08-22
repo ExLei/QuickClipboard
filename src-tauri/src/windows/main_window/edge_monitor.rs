@@ -8,6 +8,7 @@ static MONITORING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RESIZE_SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
 const RESIZE_SUPPRESS_DURATION_MS: u64 = 400;
+const EDGE_HIDE_DELAY_MS: u64 = 200;
 
 pub fn init_edge_monitor(window: WebviewWindow) {
     let window_for_event = window.clone();
@@ -45,6 +46,7 @@ pub fn start_edge_monitoring() {
         
         let mut last_near_state = false;
         let mut last_hidden_state = false;
+        let mut not_near_since_ms = None;
         
         loop {
             if !MONITORING_ACTIVE.load(Ordering::Relaxed) {
@@ -75,6 +77,7 @@ pub fn start_edge_monitoring() {
  
             if last_hidden_state != state.is_hidden {
                 last_hidden_state = state.is_hidden;
+                not_near_since_ms = None;
                 if let Ok(is_near) = check_mouse_near_edge(&window, &state) {
                     last_near_state = is_near;
                 }
@@ -91,7 +94,13 @@ pub fn start_edge_monitoring() {
             };
 
             let state_changed = is_near != last_near_state;
-            if !state_changed {
+            if is_near {
+                not_near_since_ms = None;
+            } else if not_near_since_ms.is_none() {
+                not_near_since_ms = Some(current_time_millis());
+            }
+
+            if !state_changed && (is_near || state.is_hidden || state.is_pinned) {
                 std::thread::sleep(Duration::from_millis(50));
                 continue;
             }
@@ -103,7 +112,13 @@ pub fn start_edge_monitoring() {
                         let _ = crate::show_snapped_window(&window_for_task);
                     });
                 }
-            } else if !is_near && !state.is_hidden && !state.is_pinned {
+            } else if !is_near
+                && !state.is_hidden
+                && !state.is_pinned
+                && not_near_since_ms
+                    .map(|since| current_time_millis().saturating_sub(since) >= EDGE_HIDE_DELAY_MS)
+                    .unwrap_or(false)
+            {
                 let window_for_task = window.clone();
                 let _ = window.app_handle().run_on_main_thread(move || {
                     let _ = crate::hide_snapped_window(&window_for_task);
@@ -140,6 +155,8 @@ fn current_time_millis() -> u64 {
 }
 
 const CONTENT_INSET_LOGICAL: f64 = 5.0;
+// 鼠标拖拽滚动条时允许短暂越过窗口边界，避免误触发自动隐藏
+const MOUSE_LEAVE_TOLERANCE: i32 = 8;
 
 fn check_mouse_near_edge(
     window: &WebviewWindow,
@@ -178,10 +195,10 @@ fn check_mouse_near_edge(
     };
     
     // 检查鼠标是否在窗口内
-    let mouse_in_window = cursor_x >= win_x
-        && cursor_x <= win_x + win_width as i32
-        && cursor_y >= win_y
-        && cursor_y <= win_y + win_height as i32;
+    let mouse_in_window = cursor_x >= win_x - MOUSE_LEAVE_TOLERANCE
+        && cursor_x <= win_x + win_width as i32 + MOUSE_LEAVE_TOLERANCE
+        && cursor_y >= win_y - MOUSE_LEAVE_TOLERANCE
+        && cursor_y <= win_y + win_height as i32 + MOUSE_LEAVE_TOLERANCE;
     
     // 检查鼠标是否接近对应边缘（使用当前显示器边界）
     let content_inset = (CONTENT_INSET_LOGICAL * resolved.scale_factor) as i32;
