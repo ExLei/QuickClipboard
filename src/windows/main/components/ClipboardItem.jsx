@@ -59,6 +59,7 @@ function ClipboardItem({
   sortId,
   isSelected = false,
   isMultiSelected = false,
+  selectionNumber,
   isMultiSelectMode = false,
   onHover,
   isDragActive = false,
@@ -701,7 +702,7 @@ function ClipboardItem({
               ? 'border-blue-500 bg-blue-500 text-white'
               : 'border-qc-border bg-qc-panel text-transparent'
           }`}>
-            <i className="ti ti-check" style={{ fontSize: 12 }}></i>
+            {selectionNumber}
           </span>
         </div>
       )}
@@ -915,6 +916,7 @@ function areClipboardItemPropsEqual(prevProps, nextProps) {
     && prevProps.sortId === nextProps.sortId
     && prevProps.isSelected === nextProps.isSelected
     && prevProps.isMultiSelected === nextProps.isMultiSelected
+    && prevProps.selectionNumber === nextProps.selectionNumber
     && prevProps.isMultiSelectMode === nextProps.isMultiSelectMode
     && prevProps.isDragActive === nextProps.isDragActive
     && prevProps.isDraggable === nextProps.isDraggable

@@ -214,7 +214,6 @@ export const clipboardStore = proxy({
           }
           return entry
         })
-        .sort((a, b) => a.index - b.index)
     }
 
     return true
@@ -296,7 +295,6 @@ export const clipboardStore = proxy({
             ? { ...entry, index: entry.index + 1 }
             : entry
         })
-        .sort((a, b) => a.index - b.index)
     }
 
     const { start, end } = this.currentViewRange
@@ -377,7 +375,6 @@ export const clipboardStore = proxy({
       uniqueEntries.push(this.normalizeSelectedEntry(entry))
     }
 
-    uniqueEntries.sort((a, b) => a.index - b.index)
     this.selectedEntries = uniqueEntries
     this.selectedIds = new Set(uniqueEntries.map(entry => entry.id))
   },
@@ -398,9 +395,7 @@ export const clipboardStore = proxy({
   },
 
   getSelectedIds() {
-    return [...this.selectedEntries]
-      .sort((a, b) => a.index - b.index)
-      .map(entry => entry.id)
+    return this.selectedEntries.map(entry => entry.id)
   },
 
   toggleSelect(id) {

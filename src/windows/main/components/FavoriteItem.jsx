@@ -58,6 +58,7 @@ function FavoriteItem({
   isDraggable = true,
   isSelected = false,
   isMultiSelected = false,
+  selectionNumber,
   isMultiSelectMode = false,
   onHover,
   onClick,
@@ -601,7 +602,7 @@ function FavoriteItem({
               ? 'border-blue-500 bg-blue-500 text-white'
               : 'border-qc-border bg-qc-panel text-transparent'
           }`}>
-            <i className="ti ti-check" style={{ fontSize: 12 }}></i>
+            {selectionNumber}
           </span>
         </div>
       )}
@@ -811,6 +812,7 @@ function areFavoriteItemPropsEqual(prevProps, nextProps) {
     && prevProps.isDraggable === nextProps.isDraggable
     && prevProps.isSelected === nextProps.isSelected
     && prevProps.isMultiSelected === nextProps.isMultiSelected
+    && prevProps.selectionNumber === nextProps.selectionNumber
     && prevProps.isMultiSelectMode === nextProps.isMultiSelectMode
     && prevProps.isDragActive === nextProps.isDragActive
     && prevProps.showIndex === nextProps.showIndex

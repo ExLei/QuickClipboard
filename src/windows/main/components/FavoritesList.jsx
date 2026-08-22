@@ -36,6 +36,7 @@ const FavoritesList = forwardRef(({
   const settings = useSnapshot(settingsStore);
   const showIndex = settings.showListIndex !== false;
   const selectedIdSet = useMemo(() => new Set(favSnap.selectedEntries.map(entry => entry.id)), [favSnap.selectedEntries]);
+  const selectedOrderMap = useMemo(() => new Map(favSnap.selectedEntries.map((entry, order) => [entry.id, order + 1])), [favSnap.selectedEntries]);
   const itemsArray = useMemo(() => {
     return Array.from({
       length: favSnap.totalCount
@@ -426,6 +427,7 @@ const FavoritesList = forwardRef(({
                     sortId={entry._sortId}
                     isSelected={!isMultiSelectMode && currentSelectedIndex === index}
                     isMultiSelected={selectedIdSet.has(item.id)}
+                    selectionNumber={selectedOrderMap.get(item.id)}
                     isMultiSelectMode={isMultiSelectMode}
                     onHover={() => handleItemHover(index)}
                     onClick={handleItemClick}
@@ -441,7 +443,8 @@ const FavoritesList = forwardRef(({
                   index={index}
                   sortId={entry._sortId}
                   isSelected={!isMultiSelectMode && currentSelectedIndex === index}
-                  isMultiSelected={selectedIdSet.has(item.id)}
+                    isMultiSelected={selectedIdSet.has(item.id)}
+                    selectionNumber={selectedOrderMap.get(item.id)}
                   isMultiSelectMode={isMultiSelectMode}
                   onHover={() => handleItemHover(index)}
                   onClick={handleItemClick}

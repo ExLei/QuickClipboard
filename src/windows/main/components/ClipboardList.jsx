@@ -39,6 +39,7 @@ const ClipboardList = forwardRef(({
   const showShortcut = settings.showListShortcuts !== false && !clipSnap.filter && clipSnap.contentType === 'all';
   const showIndex = settings.showListIndex !== false;
   const selectedIdSet = useMemo(() => new Set(clipSnap.selectedEntries.map(entry => entry.id)), [clipSnap.selectedEntries]);
+  const selectedOrderMap = useMemo(() => new Map(clipSnap.selectedEntries.map((entry, order) => [entry.id, order + 1])), [clipSnap.selectedEntries]);
   const itemsArray = useMemo(() => {
     return Array.from({
       length: clipSnap.totalCount
@@ -508,6 +509,7 @@ const ClipboardList = forwardRef(({
                 sortId={entry._sortId}
                 isSelected={!isMultiSelectMode && currentSelectedIndex === index}
                 isMultiSelected={selectedIdSet.has(item.id)}
+                selectionNumber={selectedOrderMap.get(item.id)}
                 isMultiSelectMode={isMultiSelectMode}
                 onHover={() => handleItemHover(index)}
                 onClick={handleItemClick}
@@ -525,7 +527,8 @@ const ClipboardList = forwardRef(({
               index={index}
               sortId={entry._sortId}
               isSelected={!isMultiSelectMode && currentSelectedIndex === index}
-              isMultiSelected={selectedIdSet.has(item.id)}
+                isMultiSelected={selectedIdSet.has(item.id)}
+                selectionNumber={selectedOrderMap.get(item.id)}
               isMultiSelectMode={isMultiSelectMode}
               onHover={() => handleItemHover(index)}
               onClick={handleItemClick}
