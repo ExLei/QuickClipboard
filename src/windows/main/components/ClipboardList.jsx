@@ -321,7 +321,7 @@ const ClipboardList = forwardRef(({
         const requestId = ++selectionRequestRef.current;
         const entries = await loadSelectionEntries(startIndex, endIndex);
         if (requestId === selectionRequestRef.current) {
-          clipboardStore.selectRange(entries);
+          clipboardStore.selectRange(anchorIndex > index ? entries.reverse() : entries);
         }
         return true;
       }
@@ -342,7 +342,7 @@ const ClipboardList = forwardRef(({
       const requestId = ++selectionRequestRef.current;
       const entries = await loadSelectionEntries(startIndex, endIndex);
       if (requestId === selectionRequestRef.current) {
-        clipboardStore.selectRange(entries);
+        clipboardStore.selectRange(selectionAnchorIndex > index ? entries.reverse() : entries);
       }
       return true;
     }

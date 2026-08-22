@@ -239,7 +239,7 @@ const FavoritesList = forwardRef(({
         const requestId = ++selectionRequestRef.current;
         const entries = await loadSelectionEntries(startIndex, endIndex);
         if (requestId === selectionRequestRef.current) {
-          favoritesStore.selectRange(entries);
+          favoritesStore.selectRange(anchorIndex > index ? entries.reverse() : entries);
         }
         return true;
       }
@@ -260,7 +260,7 @@ const FavoritesList = forwardRef(({
       const requestId = ++selectionRequestRef.current;
       const entries = await loadSelectionEntries(startIndex, endIndex);
       if (requestId === selectionRequestRef.current) {
-        favoritesStore.selectRange(entries);
+        favoritesStore.selectRange(selectionAnchorIndex > index ? entries.reverse() : entries);
       }
       return true;
     }
