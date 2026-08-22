@@ -1026,7 +1026,10 @@
   "multiSelect": {
     "enterMode": "进入多选模式",
     "exitMode": "退出多选模式",
+    "selectedLabel": "已选",
+    "selectedUnit": "项",
     "selectedCount": "已选{{count}}项",
+    "operationHint": "Ctrl 多选 · Shift 范围选择",
     "mergeCopy": "合并复制",
     "mergePaste": "合并粘贴",
     "deleteSelected": "删除所选",

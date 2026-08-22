@@ -1025,7 +1025,10 @@
   "multiSelect": {
     "enterMode": "Enter multi-select mode",
     "exitMode": "Exit multi-select mode",
+    "selectedLabel": "Selected",
+    "selectedUnit": "",
     "selectedCount": "{{count}} selected",
+    "operationHint": "Ctrl multi-select · Shift range select",
     "mergeCopy": "Merge copy",
     "mergePaste": "Merge paste",
     "deleteSelected": "Delete selected",
