@@ -48,6 +48,18 @@ const TITLE_BAR_IMAGE_ICON_STYLE = {
 const TITLE_BAR_FONT_ICON_STYLE = {
   WebkitFontSmoothing: "none",
 };
+const TITLE_BAR_BUTTON_CLASS =
+  "w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200";
+const TITLE_BAR_ICON_STYLE = {
+  fontSize: 16,
+  ...TITLE_BAR_FONT_ICON_STYLE,
+};
+const TITLE_BAR_GRID_BUTTON_CLASS =
+  "flex h-full w-full items-center justify-center transition-all duration-200";
+const TITLE_BAR_GRID_ICON_STYLE = {
+  fontSize: 14,
+  ...TITLE_BAR_FONT_ICON_STYLE,
+};
 const TOAST_CONFIG = {
   size: TOAST_SIZES.EXTRA_SMALL,
   position: TOAST_POSITIONS.BOTTOM_RIGHT,
@@ -61,6 +73,7 @@ const TitleBar = forwardRef(
       position = "top",
       activeTab = "clipboard",
       updateBannerState = null,
+      compactActions = false,
     },
     ref,
   ) => {
@@ -78,6 +91,16 @@ const TitleBar = forwardRef(
     );
     const [webdavBusy, setWebdavBusy] = useState("");
     const isVertical = position === "left" || position === "right";
+    const isCompactActions = compactActions && !isVertical;
+    const actionContainerClass = isCompactActions
+      ? "grid grid-cols-2 grid-rows-2 flex-shrink-0 overflow-hidden rounded-md border border-qc-border h-8 w-14"
+      : `flex flex-shrink-0 ${isVertical ? "flex-col items-center" : "items-center"} gap-1`;
+    const actionButtonClass = isCompactActions
+      ? TITLE_BAR_GRID_BUTTON_CLASS
+      : TITLE_BAR_BUTTON_CLASS;
+    const actionIconStyle = isCompactActions
+      ? TITLE_BAR_GRID_ICON_STYLE
+      : TITLE_BAR_ICON_STYLE;
     const tooltipPlacement = isVertical
       ? position === "left"
         ? "right"
@@ -671,9 +694,7 @@ const TitleBar = forwardRef(
             position={position}
           />
 
-          <div
-            className={`flex flex-shrink-0 ${isVertical ? "flex-col items-center" : "items-center"} gap-1`}
-          >
+          <div className={actionContainerClass}>
             <Tooltip
               content={
                 isMultiSelectMode
@@ -684,7 +705,7 @@ const TitleBar = forwardRef(
               asChild
             >
               <button
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 ${!currentStore ? "text-qc-fg-subtle opacity-60 cursor-not-allowed" : isMultiSelectMode ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
+                className={`${actionButtonClass} ${isCompactActions ? "border-r border-b border-qc-border" : ""} ${!currentStore ? "text-qc-fg-subtle opacity-60 cursor-not-allowed" : isMultiSelectMode ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
                 aria-label={
                   isMultiSelectMode
                     ? t("multiSelect.exitMode")
@@ -698,10 +719,7 @@ const TitleBar = forwardRef(
                   className={
                     isMultiSelectMode ? "ti ti-list" : "ti ti-list-check"
                   }
-                  style={{
-                    fontSize: 16,
-                    ...TITLE_BAR_FONT_ICON_STYLE,
-                  }}
+                  style={actionIconStyle}
                   data-stroke="1.5"
                 ></i>
               </button>
@@ -713,7 +731,7 @@ const TitleBar = forwardRef(
               asChild
             >
               <button
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 ${settingsSnap.edgeHideEnabled ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
+                className={`${actionButtonClass} ${isCompactActions ? "border-b border-qc-border" : ""} ${settingsSnap.edgeHideEnabled ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
                 role="switch"
                 aria-checked={Boolean(settingsSnap.edgeHideEnabled)}
                 aria-label={t("settings.clipboard.edgeHideEnabled")}
@@ -722,10 +740,7 @@ const TitleBar = forwardRef(
               >
                 <i
                   className={settingsSnap.edgeHideEnabled ? "ti ti-browser-check" : "ti ti-browser"}
-                  style={{
-                    fontSize: 16,
-                    ...TITLE_BAR_FONT_ICON_STYLE,
-                  }}
+                  style={actionIconStyle}
                   data-stroke="1.5"
                 ></i>
               </button>
@@ -737,16 +752,13 @@ const TitleBar = forwardRef(
               asChild
             >
               <button
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 ${isPinned ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
+                className={`${actionButtonClass} ${isCompactActions ? "border-r border-qc-border" : ""} ${isPinned ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
                 onClick={handleTogglePin}
                 aria-label={t("tools.pin")}
               >
                 <i
                   className="ti ti-pin"
-                  style={{
-                    fontSize: 16,
-                    ...TITLE_BAR_FONT_ICON_STYLE,
-                  }}
+                  style={actionIconStyle}
                   data-stroke="1.5"
                 ></i>
               </button>
@@ -758,17 +770,14 @@ const TitleBar = forwardRef(
               asChild
             >
               <button
-                className="w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 hover:bg-qc-hover text-qc-fg-muted"
+                className={`${actionButtonClass} hover:bg-qc-hover text-qc-fg-muted`}
                 aria-label={t("tools.more")}
                 type="button"
                 onClick={handleMoreMenu}
               >
                 <i
                   className="ti ti-dots"
-                  style={{
-                    fontSize: 16,
-                    ...TITLE_BAR_FONT_ICON_STYLE,
-                  }}
+                  style={actionIconStyle}
                   data-stroke="1.5"
                 ></i>
               </button>

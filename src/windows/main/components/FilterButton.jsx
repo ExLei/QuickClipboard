@@ -52,7 +52,7 @@ function FilterButton({
           {isActive && (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute left-1 right-1 bottom-0 h-0.5 rounded-full"
+              className={`pointer-events-none absolute bottom-0 h-0.5 rounded-full ${compact ? 'left-1/2 w-4 -translate-x-1/2' : 'left-1 right-1'}`}
               style={{ backgroundColor: 'var(--qc-accent)' }}
             />
           )}

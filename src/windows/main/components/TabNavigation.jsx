@@ -50,7 +50,8 @@ function TabNavigation({
   onEmojiModeChange,
   onGroupChange,
   groupsPopupRef,
-  navigationMode = 'horizontal'
+  navigationMode = 'horizontal',
+  compactFilters = false
 }) {
   const {
     t
@@ -59,6 +60,7 @@ function TabNavigation({
   const uiAnimationEnabled = settings.uiAnimationEnabled !== false;
   const visibleOptionalTabs = normalizeVisibleOptionalTabs(settings.visibleOptionalTabs);
   const isSidebarLayout = navigationMode === 'sidebar';
+  const isCompactFiltersLayout = compactFilters && !isSidebarLayout;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isGroupsPanelOpen, setIsGroupsPanelOpen] = useState(false);
   const tabsRef = useRef({});
@@ -583,7 +585,9 @@ function TabNavigation({
               ))
             : (
                 <>
-                  <div className="flex items-center gap-0 h-9 flex-1 min-w-0">
+                  <div className={isCompactFiltersLayout
+                    ? 'grid grid-cols-3 grid-rows-2 gap-0 h-8 flex-1 min-w-0'
+                    : 'flex items-center gap-0 h-9 flex-1 min-w-0'}>
                     {[...filters, ...pasteFilters].map(filter => (
                       <FilterButton key={filter.id} id={filter.id} label={filter.label}
                         icon={filter.icon}
@@ -592,7 +596,9 @@ function TabNavigation({
                           : isPasteFilterSelected(filter.id)}
                         onClick={FILTER_IDS.includes(filter.id)
                           ? handleFilterChange
-                          : handlePasteFilterChange} stretch
+                          : handlePasteFilterChange}
+                        stretch
+                        compact={isCompactFiltersLayout}
                         buttonRef={el => { filtersRef.current[filter.id] = el; }} />
                     ))}
                   </div>
