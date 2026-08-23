@@ -113,7 +113,7 @@ function FavoriteItem({
   })();
 
   // 外部拖拽信息：列表拖至窗口边缘时由父组件切换为系统拖拽。
-  const externalDragInfo = getExternalDragInfo(item, renderType, t, logoIcon);
+  const externalDragInfo = getExternalDragInfo(item, renderType, t, logoIcon, 'favorite');
 
   const externalDragPaths = externalDragInfo.paths;
   const externalDragIconPath = externalDragInfo.iconPath;
@@ -229,7 +229,7 @@ function FavoriteItem({
     data: {
       externalDrag: canExternalDrag ? {
         item: externalDragInfo.item || externalDragPaths,
-        textPayload: externalDragInfo.textPayload,
+        textSource: externalDragInfo.textSource,
         iconPath: externalDragIconPath,
       } : null,
     },

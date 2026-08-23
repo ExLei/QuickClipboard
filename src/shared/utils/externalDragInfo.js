@@ -1,20 +1,12 @@
 import { createDragPreviewIcon, createImagesDragPreviewIcon } from './dragPreviewIcon';
 
-export function getExternalDragInfo(item, renderType, t, fallbackIcon) {
+export function getExternalDragInfo(item, renderType, t, fallbackIcon, source) {
   const isImage = renderType === 'image';
   const isFile = renderType === 'file';
   if (!isImage && !isFile) {
     if (renderType === 'text' || renderType === 'rich_text') {
-      const text = typeof item.content === 'string' ? item.content : '';
-      const html = typeof item.html_content === 'string' ? item.html_content : '';
-      if (!text && !html) return { paths: [], item: null, iconPath: null };
-      const data = { 'text/plain': text || html.replace(/<[^>]+>/g, '') };
-      const types = ['text/plain'];
-      if (html) {
-        data['text/html'] = html;
-        types.push('text/html');
-      }
-      return { paths: [], item: { data, types }, textPayload: { plain: data['text/plain'], html: html || null }, iconPath: fallbackIcon, canDrag: true };
+      if (!source || !item?.id) return { paths: [], item: null, iconPath: null };
+      return { paths: [], item: null, textSource: { source, itemId: item.id }, iconPath: fallbackIcon, canDrag: true };
     }
     return { paths: [], item: null, iconPath: null };
   }

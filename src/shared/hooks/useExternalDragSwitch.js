@@ -1,11 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startDrag } from '@crabnebula/tauri-plugin-drag';
 import { invoke } from '@tauri-apps/api/core';
+import { getClipboardItemById, getFavoriteItemById } from '@shared/api/clipboard';
 
 const EXTERNAL_DRAG_EDGE_THRESHOLD_PX = 24;
 
 function hasDragPayload(dragInfo) {
-  return Boolean(dragInfo?.item && ((Array.isArray(dragInfo.item) && dragInfo.item.length) || (!Array.isArray(dragInfo.item) && dragInfo.item.data)));
+  return Boolean(dragInfo?.textSource?.source && dragInfo.textSource.itemId)
+    || Boolean(dragInfo?.item && ((Array.isArray(dragInfo.item) && dragInfo.item.length) || (!Array.isArray(dragInfo.item) && dragInfo.item.data)));
+}
+
+async function loadFullTextPayload(textSource) {
+  const item = textSource.source === 'clipboard'
+    ? await getClipboardItemById(Number(textSource.itemId))
+    : await getFavoriteItemById(String(textSource.itemId));
+
+  if (!item) {
+    throw new Error('获取拖拽文本失败：条目不存在');
+  }
+
+  const plain = typeof item.content === 'string' ? item.content : '';
+  const html = typeof item.html_content === 'string' && item.html_content ? item.html_content : null;
+  const fallbackPlain = html ? html.replace(/<[^>]+>/g, '') : '';
+  if (!plain && !fallbackPlain) {
+    throw new Error('获取拖拽文本失败：内容为空');
+  }
+
+  return { plain: plain || fallbackPlain, html };
 }
 
 export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, closePreview }) {
@@ -63,8 +84,9 @@ export function useExternalDragSwitch({ onDragStart, onDragEnd, onDragCancel, cl
       try {
         const preview = previewRef.current;
         const icon = preview?.sortId === sortId ? await preview.promise : await createPreview(dragInfo);
-        if (dragInfo.textPayload) {
-          await invoke('start_text_drag', dragInfo.textPayload);
+        if (dragInfo.textSource) {
+          const textPayload = await loadFullTextPayload(dragInfo.textSource);
+          await invoke('start_text_drag', textPayload);
         } else {
           await startDrag({ item: dragInfo.item, icon: icon || dragInfo.paths?.[0], mode: 'copy' });
         }
