@@ -10,6 +10,7 @@ import FloatingToolbar from './FloatingToolbar';
 const SEARCH_DEBOUNCE_DELAY = 200;
 const ClipboardTab = forwardRef(({
   contentFilter,
+  pasteFilter = 'all',
   searchQuery
 }, ref) => {
   const snap = useSnapshot(clipboardStore);
@@ -37,6 +38,7 @@ const ClipboardTab = forwardRef(({
 
   useEffect(() => {
     clipboardStore.setContentType(contentFilter);
+    clipboardStore.setPasteStatus(pasteFilter);
     debouncedSearch(searchQuery, contentFilter);
 
     return () => {
@@ -44,7 +46,7 @@ const ClipboardTab = forwardRef(({
         clearTimeout(searchDebounceRef.current);
       }
     };
-  }, [searchQuery, contentFilter, debouncedSearch]);
+  }, [searchQuery, contentFilter, pasteFilter, debouncedSearch]);
 
 
   useEffect(() => {

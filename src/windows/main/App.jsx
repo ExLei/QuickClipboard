@@ -63,6 +63,7 @@ function App() {
   } = useTheme();
   const [activeTab, setActiveTab] = useState('clipboard');
   const [contentFilter, setContentFilter] = useState('all');
+  const [pasteFilter, setPasteFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [emojiMode, setEmojiMode] = useState('emoji'); // 'emoji' | 'symbols' | 'images'
   const [updateBannerState, setUpdateBannerState] = useState(null);
@@ -511,10 +512,10 @@ function App() {
     bg-qc-surface
   `.trim().replace(/\s+/g, ' ');
   const TitleBarComponent = <TitleBar ref={searchRef} searchQuery={searchQuery} onSearchChange={setSearchQuery} searchPlaceholder={t('search.placeholder')} position={settings.titleBarPosition} activeTab={activeTab} updateBannerState={updateBannerState} />;
-  const TabNavigationComponent = <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} contentFilter={contentFilter} onFilterChange={setContentFilter} emojiMode={emojiMode} onEmojiModeChange={setEmojiMode} onGroupChange={handleGroupChange} groupsPopupRef={groupsPopupRef} navigationMode={tabNavigationMode} />;
+  const TabNavigationComponent = <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} contentFilter={contentFilter} onFilterChange={setContentFilter} pasteFilter={pasteFilter} onPasteFilterChange={setPasteFilter} emojiMode={emojiMode} onEmojiModeChange={setEmojiMode} onGroupChange={handleGroupChange} groupsPopupRef={groupsPopupRef} navigationMode={tabNavigationMode} />;
   const ContentComponent = <div ref={contentDragRef} className="main-content-area flex-1 min-h-0 overflow-hidden relative pb-[8px] bg-qc-surface transition-colors duration-500">
-      {activeTab === 'clipboard' && <ClipboardTab ref={clipboardTabRef} contentFilter={contentFilter} searchQuery={searchQuery} />}
-      {activeTab === 'favorites' && <FavoritesTab ref={favoritesTabRef} contentFilter={contentFilter} searchQuery={searchQuery} />}
+      {activeTab === 'clipboard' && <ClipboardTab ref={clipboardTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} />}
+      {activeTab === 'favorites' && <FavoritesTab ref={favoritesTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} />}
       {activeTab === 'emoji' && <Suspense fallback={null}><EmojiTab emojiMode={emojiMode} onEmojiModeChange={setEmojiMode} /></Suspense>}
     </div>;
   const ActionBarComponent = <MultiSelectActionBar activeTab={activeTab} />;

@@ -12,6 +12,7 @@ import FloatingToolbar from './FloatingToolbar';
 const SEARCH_DEBOUNCE_DELAY = 200;
 const FavoritesTab = forwardRef(({
   contentFilter,
+  pasteFilter = 'all',
   searchQuery
 }, ref) => {
   const snap = useSnapshot(favoritesStore);
@@ -39,6 +40,7 @@ const FavoritesTab = forwardRef(({
 
   useEffect(() => {
     favoritesStore.setContentType(contentFilter);
+    favoritesStore.setPasteStatus(pasteFilter);
     debouncedSearch(searchQuery, contentFilter);
     
     return () => {
@@ -46,7 +48,7 @@ const FavoritesTab = forwardRef(({
         clearTimeout(searchDebounceRef.current);
       }
     };
-  }, [searchQuery, contentFilter, debouncedSearch]);
+  }, [searchQuery, contentFilter, pasteFilter, debouncedSearch]);
 
   useEffect(() => {
     if (snap.totalCount > prevTotalCountRef.current) {
