@@ -197,7 +197,7 @@ const FavoritesList = forwardRef(({
     }
     navigationStore.resetNavigation();
     onScrollStateChangeRef.current?.({ atTop: true });
-  }, [favSnap.filter, favSnap.contentType, groupsSnap.currentGroup, scrollerElement]);
+  }, [favSnap.filter, favSnap.contentType, favSnap.pasteStatus, groupsSnap.currentGroup, scrollerElement]);
 
   const loadSelectionEntries = useCallback(async (startIndex, endIndex) => {
     const entries = [];

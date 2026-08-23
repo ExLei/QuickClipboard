@@ -205,7 +205,7 @@ const ClipboardList = forwardRef(({
     }
     navigationStore.resetNavigation();
     onScrollStateChangeRef.current?.({ atTop: true });
-  }, [clipSnap.filter, clipSnap.contentType, scrollerElement]);
+  }, [clipSnap.filter, clipSnap.contentType, clipSnap.pasteStatus, scrollerElement]);
 
   const loadMissingRange = useCallback(async (startIndex, endIndex) => {
     if (clipSnap.loading || clipSnap.totalCount <= 0) {

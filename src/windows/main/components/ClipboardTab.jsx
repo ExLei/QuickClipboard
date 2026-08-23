@@ -2,7 +2,6 @@ import { useRef, forwardRef, useImperativeHandle, useEffect, useState, useCallba
 import { useSnapshot } from 'valtio';
 import { listen } from '@tauri-apps/api/event';
 import { clipboardStore, refreshClipboardHistory } from '@shared/store/clipboardStore';
-import { navigationStore } from '@shared/store/navigationStore';
 import { settingsStore } from '@shared/store/settingsStore';
 import ClipboardList from './ClipboardList';
 import FloatingToolbar from './FloatingToolbar';
@@ -28,11 +27,6 @@ const ClipboardTab = forwardRef(({
     searchDebounceRef.current = setTimeout(() => {
       clipboardStore.setFilter(query);
       refreshClipboardHistory();
-      if (query) {
-        navigationStore.setSelectedIndex(0);
-      } else {
-        navigationStore.resetNavigation();
-      }
     }, query ? SEARCH_DEBOUNCE_DELAY : 0);
   }, []);
 

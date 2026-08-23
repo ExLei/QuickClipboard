@@ -284,7 +284,10 @@ const TitleBar = forwardRef(
         const activeItem = typeof activeIndex === "number" && activeIndex >= 0
           ? currentStore.getItem(activeIndex)
           : null;
-        if (!activeItem?.id) return;
+        if (!activeItem?.id) {
+          toast.warning(t("multiSelect.selectFirst"), TOAST_CONFIG);
+          return;
+        }
         currentStore.enterMultiSelectMode({
           id: activeItem.id,
           index: activeIndex,
