@@ -53,6 +53,13 @@ pub fn run() {
         }
     }
 
+    #[cfg(windows)]
+    match services::system::startup::restart_after_legacy_auto_start() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => eprintln!("迁移旧自启动参数失败: {error}"),
+    }
+
     startup_diagnostics::set_startup_stage("执行启动安全检查");
     startup_diagnostics::mark_starting();
     security::check_webview_security();
@@ -78,8 +85,7 @@ pub fn run() {
                         eprintln!("修复管理员启动配置失败: {error}");
                     }
                 } else {
-                    let launch_context = services::system::startup::launch_context();
-                    if launch_context.admin_relaunch {
+                    if services::system::startup::is_admin_relaunch() {
                         eprintln!("管理员重启后的进程仍未获得管理员权限，已停止重复提权");
                     } else {
                         startup_diagnostics::set_startup_stage("检查管理员启动：准备启动管理员实例");
@@ -110,14 +116,10 @@ pub fn run() {
                 let _ = services::low_memory::toggle_panel();
                 return;
             }
-            let is_background_launch = argv.iter().any(|argument| {
-                matches!(
-                    argument.as_str(),
-                    services::system::startup::AUTO_START_ARG
-                        | services::system::startup::ADMIN_RELAUNCH_ARG
-                )
-            });
-            if is_background_launch {
+            let is_admin_relaunch = argv
+                .iter()
+                .any(|argument| argument == services::system::startup::ADMIN_RELAUNCH_ARG);
+            if is_admin_relaunch {
                 return;
             }
             match services::low_memory::ensure_main_window(app) {
