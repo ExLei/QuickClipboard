@@ -146,6 +146,24 @@ const TitleBar = forwardRef(
         console.error("标题栏固定窗口失败:", error);
       }
     };
+    const handleToggleEdgeHide = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const previousValue = Boolean(settingsStore.edgeHideEnabled);
+      const nextValue = !previousValue;
+      try {
+        const result = await settingsStore.saveSetting(
+          "edgeHideEnabled",
+          nextValue,
+        );
+        if (result?.success === false) {
+          settingsStore.edgeHideEnabled = previousValue;
+        }
+      } catch (error) {
+        settingsStore.edgeHideEnabled = previousValue;
+        console.error("标题栏切换贴边隐藏失败:", error);
+      }
+    };
     const handleOpenSettings = async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -680,6 +698,30 @@ const TitleBar = forwardRef(
                   className={
                     isMultiSelectMode ? "ti ti-list" : "ti ti-list-check"
                   }
+                  style={{
+                    fontSize: 16,
+                    ...TITLE_BAR_FONT_ICON_STYLE,
+                  }}
+                  data-stroke="1.5"
+                ></i>
+              </button>
+            </Tooltip>
+
+            <Tooltip
+              content={t("settings.clipboard.edgeHideEnabled")}
+              placement={tooltipPlacement}
+              asChild
+            >
+              <button
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 ${settingsSnap.edgeHideEnabled ? ACTIVE_ICON_BUTTON_CLASS : "hover:bg-qc-hover text-qc-fg-muted"}`}
+                role="switch"
+                aria-checked={Boolean(settingsSnap.edgeHideEnabled)}
+                aria-label={t("settings.clipboard.edgeHideEnabled")}
+                type="button"
+                onClick={handleToggleEdgeHide}
+              >
+                <i
+                  className={settingsSnap.edgeHideEnabled ? "ti ti-browser-check" : "ti ti-browser"}
                   style={{
                     fontSize: 16,
                     ...TITLE_BAR_FONT_ICON_STYLE,
