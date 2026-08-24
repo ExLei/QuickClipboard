@@ -2,6 +2,9 @@ import '@tabler/icons-webfont/dist/tabler-icons.min.css';
 import { useTranslation } from 'react-i18next';
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
+
+const MIN_BOTTOM_POSITION = 16;
+
 function FloatingToolbar({
   showScrollTop = false,
   showAddFavorite = false,
@@ -11,7 +14,7 @@ function FloatingToolbar({
   const {
     t
   } = useTranslation();
-  const [bottomPosition, setBottomPosition] = useState(16);
+  const [bottomPosition, setBottomPosition] = useState(MIN_BOTTOM_POSITION);
   const [isDragging, setIsDragging] = useState(false);
   const [maxBottom, setMaxBottom] = useState(null);
   const dragRef = useRef({
@@ -34,9 +37,13 @@ function FloatingToolbar({
     const updateMaxBottom = () => {
       const parentHeight = parent.clientHeight;
       const toolbarHeight = toolbar.clientHeight;
-      const newMaxBottom = parentHeight - toolbarHeight - 16;
+      const newMaxBottom = parentHeight - toolbarHeight - MIN_BOTTOM_POSITION;
+      if (newMaxBottom < MIN_BOTTOM_POSITION) {
+        return;
+      }
+
       setMaxBottom(current => current === newMaxBottom ? current : newMaxBottom);
-      setBottomPosition(current => Math.min(current, newMaxBottom));
+      setBottomPosition(current => Math.min(Math.max(current, MIN_BOTTOM_POSITION), newMaxBottom));
     };
 
     updateMaxBottom();
@@ -70,7 +77,7 @@ function FloatingToolbar({
     const handleMouseMove = e => {
       const deltaY = dragRef.current.startY - e.clientY;
       let newBottom = dragRef.current.startBottom + deltaY;
-      newBottom = Math.max(16, newBottom);
+      newBottom = Math.max(MIN_BOTTOM_POSITION, newBottom);
       if (maxBottom !== null) {
         newBottom = Math.min(newBottom, maxBottom);
       }
