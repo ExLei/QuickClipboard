@@ -56,6 +56,7 @@ pub async fn get_favorites_history(
     group_name: Option<String>,
     search: Option<String>,
     content_type: Option<String>,
+    paste_status: Option<String>,
 ) -> Result<PaginatedResult<FavoriteItem>, String> {
     tokio::task::spawn_blocking(move || {
         let params = FavoritesQueryParams {
@@ -64,6 +65,7 @@ pub async fn get_favorites_history(
             group_name,
             search,
             content_type,
+            paste_status,
         };
 
         let mut result = query_favorites(params)?;

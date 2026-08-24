@@ -54,6 +54,7 @@ pub async fn get_clipboard_history(
     limit: Option<i64>,
     search: Option<String>,
     content_type: Option<String>,
+    paste_status: Option<String>,
 ) -> Result<PaginatedResult<ClipboardItem>, String> {
     tokio::task::spawn_blocking(move || {
         let params = QueryParams {
@@ -61,6 +62,7 @@ pub async fn get_clipboard_history(
             limit: limit.unwrap_or(50),
             search,
             content_type,
+            paste_status,
         };
         let result = query_clipboard_items(params)?;
         let mut items = result.items;
