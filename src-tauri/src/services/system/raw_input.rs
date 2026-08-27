@@ -180,6 +180,18 @@ mod windows_raw_input {
                 return;
             }
 
+            // 校准物理修饰键初始状态（issue #496 审查发现）：原子量纯事件驱动，
+            // 用户在注册前已按住的修饰键（如开机自启时正按着组合键）永远不会
+            // 产生事件，物理态将持续误报为抬起，卡键检测会把用户正按着的修饰
+            // 键误判为卡住并注入释放。以注册成功后的异步键态快照补齐初值；
+            // 校准先于消息循环执行，注册后到来的物理事件（含已排队者）按序
+            // 覆盖快照，任何交错下终态均正确
+            CTRL_DOWN.store(is_vk_pressed(VK_CONTROL_CODE), Ordering::Relaxed);
+            SHIFT_DOWN.store(is_vk_pressed(VK_SHIFT_CODE), Ordering::Relaxed);
+            ALT_DOWN.store(is_vk_pressed(VK_MENU_CODE), Ordering::Relaxed);
+            LWIN_DOWN.store(is_vk_pressed(VK_LWIN_CODE), Ordering::Relaxed);
+            RWIN_DOWN.store(is_vk_pressed(VK_RWIN_CODE), Ordering::Relaxed);
+
             println!("[RawInput] Raw Input 已启动");
 
             let mut msg = MSG::default();

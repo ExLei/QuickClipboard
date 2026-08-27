@@ -98,6 +98,9 @@ static UI_CALLBACK: Lazy<Mutex<Option<UiCallback>>> = Lazy::new(|| Mutex::new(No
 static UI_STARTED: AtomicBool = AtomicBool::new(false);
 static UI_VISIBLE: AtomicBool = AtomicBool::new(false);
 static PANEL_BOUNDS: Lazy<Mutex<Option<(i32, i32, i32, i32)>>> = Lazy::new(|| Mutex::new(None));
+// 面板窗口的原生句柄：FLTK 每次 Show 重建 OS 窗口，句柄随 Show 刷新
+// （FLTK 线程写入）、随隐藏落地清空（隐藏会销毁 OS 窗口，句柄随之失效）
+static PANEL_HWND: Lazy<Mutex<Option<isize>>> = Lazy::new(|| Mutex::new(None));
 
 const DEFAULT_WIDTH: i32 = 420;
 const ROW_HEIGHT: i32 = 18;
@@ -189,6 +192,22 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn ui_callback() -> Option<UiCallback> {
     lock_or_recover(&UI_CALLBACK).clone()
+}
+
+// 发出一次 UiEvent::Hidden。win.hide() 内部会同步重入窗口事件闭包
+// （FL_HIDE 先于 DestroyWindow 派发），重入与外层分支各到达一次；以
+// UI_VISIBLE 的 true→false 交换去重，保证每次可见→隐藏转换只回调一次
+// ——fltk 升级改变 FL_HIDE 重入时机时，无论哪一侧落地，仍恰好一次
+fn emit_hidden_once() {
+    if UI_VISIBLE.swap(false, Ordering::SeqCst) {
+        if let Some(callback) = ui_callback() {
+            callback(UiEvent::Hidden);
+        }
+        // 隐藏落地后 OS 窗口即将销毁：回调（FL_HIDE 先于 DestroyWindow
+        // 派发、此时句柄仍有效）读取之后清空，避免残留已销毁句柄被
+        // 后续埋点误用
+        *lock_or_recover(&PANEL_HWND) = None;
+    }
 }
 
 pub fn init<F>(callback: F) -> Result<(), String>
@@ -507,18 +526,14 @@ where
                     if win.shown() {
                         win.hide();
                     }
-                    UI_VISIBLE.store(false, Ordering::SeqCst);
-                    if let Some(callback) = ui_callback() {
-                        callback(UiEvent::Hidden);
-                    }
+                    emit_hidden_once();
                     true
                 }
                 Event::KeyDown if app::event_key() == Key::Escape => {
-                    win.hide();
-                    UI_VISIBLE.store(false, Ordering::SeqCst);
-                    if let Some(callback) = ui_callback() {
-                        callback(UiEvent::Hidden);
+                    if win.shown() {
+                        win.hide();
                     }
+                    emit_hidden_once();
                     true
                 }
                 Event::Resize => {
@@ -686,6 +701,13 @@ where
                             options.physical_width,
                             options.physical_height,
                         ));
+                        // FLTK 每次 Show 重建 OS 窗口：先刷新句柄再置可见
+                        // 标志，保证 is_visible() 为真时句柄必已就绪
+                        #[cfg(target_os = "windows")]
+                        {
+                            *lock_or_recover(&PANEL_HWND) =
+                                Some(window.raw_handle() as isize);
+                        }
                         UI_VISIBLE.store(true, Ordering::SeqCst);
                     }
                     Command::Hide => {
@@ -693,7 +715,10 @@ where
                             window.hide();
                         }
                         *lock_or_recover(&PANEL_BOUNDS) = None;
-                        UI_VISIBLE.store(false, Ordering::SeqCst);
+                        // 与事件分支共用同一去重回调：win.hide() 的 FL_HIDE
+                        // 重入先落地一次，此处交换为 no-op；重入时机变化时
+                        // 由此处落地——无论哪侧执行都恰好一次
+                        emit_hidden_once();
                     }
                 }
             }
@@ -732,6 +757,13 @@ pub fn hide() -> Result<(), String> {
 
 pub fn is_visible() -> bool {
     UI_VISIBLE.load(Ordering::SeqCst)
+}
+
+// 面板窗口当前的原生句柄：面板可见期间有效（Show 时在 FLTK 线程刷新、
+// 先于 UI_VISIBLE 置位），隐藏落地后为 None。粘贴模块据此以精确句柄
+// 判定「面板隐藏是否留下待完成的前台切换」
+pub fn panel_hwnd() -> Option<isize> {
+    *lock_or_recover(&PANEL_HWND)
 }
 
 pub fn contains_point(x: i32, y: i32) -> bool {

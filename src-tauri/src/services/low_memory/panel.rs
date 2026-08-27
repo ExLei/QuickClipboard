@@ -50,7 +50,18 @@ pub fn init_panel(app: AppHandle) -> Result<(), String> {
                 }
             });
         }
-        UiEvent::Hidden => {}
+        UiEvent::Hidden => {
+            // 面板隐藏回调（ESC / 失焦自隐藏，及 hide_panel 的隐藏落地时刻）：
+            // 插件侧已按可见→隐藏转换去重，每次隐藏只回调一次（此前
+            // win.hide() 的 FL_HIDE 重入与外层分支会各发一次，第二次以
+            // HWND 销毁后的前台快照覆盖第一次）。面板隐藏会异步引发前台
+            // 切换：以面板自身句柄通知粘贴模块，仅在其此刻仍持前台时
+            // 记录等待（issue #496）
+            #[cfg(target_os = "windows")]
+            crate::services::paste::keyboard::note_own_window_hidden(
+                low_memory_fltk::panel_hwnd(),
+            );
+        }
     })
 }
 
@@ -136,6 +147,11 @@ fn show_panel_at_current_page(position_override: Option<PanelPosition>) -> Resul
         state.last_position = Some(position);
     }
 
+    // 面板（重新）显示：此前隐藏留下的「待完成前台切换」不再成立（面板将
+    // 重获前台），清除埋点，随后的粘贴序列不再等待该切换、保持零等待
+    #[cfg(target_os = "windows")]
+    crate::services::paste::keyboard::clear_own_window_hidden_pending();
+
     low_memory_fltk::show(ShowOptions {
         items: page.items,
         footer_text: format!(
@@ -215,6 +231,21 @@ fn build_position(height_logical: i32) -> Result<PanelPosition, String> {
 
 pub fn hide_panel() -> Result<(), String> {
     PANEL_PAGE_STATE.lock().last_position = None;
+    // 面板可见才真正隐藏、才可能引发前台切换（issue #496）：不可见时
+    // （进入/退出低占用模式会对已隐藏面板无条件调用）不埋点，避免
+    // 覆盖既有挂起埋点。此处在隐藏请求时刻以面板真实句柄埋点，覆盖
+    // 命令送达 FLTK 线程（16ms 循环）前的间隙；隐藏落地时
+    // UiEvent::Hidden 回调（已去重为单次）以更接近落地时刻的前台
+    // 复核——两次都以同一面板句柄比对、仅在其仍持前台时记录，
+    // 方向恒一致
+    #[cfg(target_os = "windows")]
+    {
+        if low_memory_fltk::is_visible() {
+            crate::services::paste::keyboard::note_own_window_hidden(
+                low_memory_fltk::panel_hwnd(),
+            );
+        }
+    }
     low_memory_fltk::hide()
 }
 

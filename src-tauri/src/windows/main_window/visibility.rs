@@ -34,6 +34,11 @@ pub fn show_main_window(window: &WebviewWindow) {
         return;
     }
 
+    // 主窗口重新显示：此前隐藏留下的「待完成前台切换」不再成立（窗口将
+    // 重获前台），清除埋点，随后的粘贴序列不再等待该切换、保持零等待
+    #[cfg(target_os = "windows")]
+    crate::services::paste::keyboard::clear_own_window_hidden_pending();
+
     let state = super::state::get_window_state();
 
     if state.is_snapped && state.is_hidden {
@@ -271,6 +276,15 @@ fn hide_normal_window(window: &WebviewWindow) {
     }
 
     let _ = window.hide();
+    // 主窗口刚隐藏（若此刻仍持前台，Windows 会异步切换前台）：通知粘贴模块，
+    // 下一个粘贴序列需等待切换完成再注入（issue #496）。带句柄埋点可区分
+    // 「被隐藏窗口仍持前台」与「前台已在别处」（如粘贴目标为本进程窗口），
+    // 后者无需等待。贴边隐藏（snap.rs）只移出屏幕不真正隐藏、不引发前台
+    // 切换，无需埋点
+    #[cfg(target_os = "windows")]
+    crate::services::paste::keyboard::note_own_window_hidden(
+        window.hwnd().map(|hwnd| hwnd.0 as isize).ok(),
+    );
     set_window_state(WindowState::Hidden);
     crate::services::memory::schedule_cleanup_after_main_window_hide();
 

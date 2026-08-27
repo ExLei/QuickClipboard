@@ -255,14 +255,52 @@ fn log_auto_low_memory_state(next_state: AutoLowMemoryLogState) {
 
 // 销毁所有 WebView 窗口
 fn destroy_all_webviews(app: &AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if label.starts_with("pin-image-") {
-            let _ = window.destroy();
+    // 销毁集（本函数实际销毁的窗口）：埋点过滤与销毁循环共享同一谓词、
+    // 单点定义——新增窗口类时不会出现「销毁循环改了、埋点过滤漏改」的
+    // 漂移；持前台的窗口被销毁却无埋点会使粘贴跨切换注入、修饰键卡住
+    // 静默复发（issue #496）
+    let in_destroy_set =
+        |label: &str| label.starts_with("pin-image-") || WEBVIEW_LABELS.contains(&label);
+
+    // 直接销毁可能仍持前台的可见主窗口同样会异步引发前台切换（issue #496）；
+    // 该路径不走 set_window_state / hide_main_window，需在此自行埋点。
+    // 仅当即将销毁的某个窗口恰持前台时、其销毁才留下待完成的切换，才
+    // 埋点——receive-box 等本进程存活窗口不在销毁集内，不可用「前台
+    // 属于本进程」猜测：猜测误判导致粘贴白等 300ms
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+        let foreground_val = unsafe {
+            let foreground = GetForegroundWindow();
+            if foreground.0.is_null() {
+                0
+            } else {
+                foreground.0 as isize
+            }
+        };
+        // 前台为空说明正处于某次切换的中间态，而销毁尚未执行、该切换
+        // 并非本次销毁引发——跳过埋点，不把等待挂到无关切换的落定上。
+        // 与 note_own_window_hidden 前台为空时保守等待的差异源自时序：
+        // 此处埋点必先于销毁执行，中间态不可能由本次销毁引发；彼处的
+        // 调用方可能在隐藏落地后埋点，中间态可能正是本次隐藏引发的切换
+        if foreground_val != 0 {
+            let hidden_hwnd = app
+                .webview_windows()
+                .into_iter()
+                .filter(|(label, _)| in_destroy_set(label.as_str()))
+                .filter_map(|(_, window)| {
+                    window.hwnd().ok().map(|hwnd| hwnd.0 as isize)
+                })
+                .find(|hwnd| *hwnd == foreground_val);
+            if let Some(hwnd) = hidden_hwnd {
+                crate::services::paste::keyboard::note_own_window_hidden(Some(hwnd));
+            }
         }
     }
 
-    for label in WEBVIEW_LABELS {
-        if let Some(window) = app.get_webview_window(label) {
+    for (label, window) in app.webview_windows() {
+        if in_destroy_set(label.as_str()) {
             let _ = window.destroy();
         }
     }

@@ -70,6 +70,9 @@ pub fn show_quickpaste_window(app: &AppHandle) -> Result<(), String> {
 pub fn hide_quickpaste_window(app: &AppHandle) -> Result<(), String> {
     disable_quickpaste_keyboard_mode();
     if let Some(window) = app.get_webview_window("quickpaste") {
+        // 此处无需隐藏埋点（note_own_window_hidden）：便捷粘贴窗口以
+        // focusable(false) 创建、从不持有前台，隐藏不会引发前台切换，
+        // 粘贴注入时目标窗口本就是前台，不存在跨切换的不对称
         let _ = window.hide();
     }
     set_visible(false);

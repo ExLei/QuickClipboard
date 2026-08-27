@@ -239,17 +239,23 @@ unsafe extern "system" fn focus_callback(
 ) {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetClassNameW, GetWindowTextW};
 
+    let hwnd = GetForegroundWindow();
+    if hwnd.0.is_null() {
+        return;
+    }
+
+    // 前台已切换到新窗口：重试释放被上一个前台（高完整性窗口）拦截的
+    // 修饰键与粘贴主键 up 注入（issue #496 卡键自愈；粘贴序列进行中时
+    // 自动让位）。须位于低内存早退之前：低内存面板可见期间的前台切换
+    // 同样需要自愈
+    crate::services::paste::keyboard::try_release_stuck_keys();
+
     if crate::services::low_memory::is_low_memory_mode()
         && crate::services::low_memory::is_panel_visible()
     {
         return;
     }
 
-    let hwnd = GetForegroundWindow();
-    if hwnd.0.is_null() {
-        return;
-    }
-    
     let hwnd_val = hwnd.0 as isize;
 
     if EXCLUDED_HWNDS.lock().contains(&hwnd_val) {
